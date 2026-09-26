@@ -1,7 +1,11 @@
 # ⚙️ MARK LIV (54)
-### The Ultimate Cross-Platform Personal AI Assistant — By FatihMakes
+### The Ultimate Cross-Platform Personal AI Assistant — Mark LIV build by **Mr Jai**
 
-> 📺 **[Watch the full setup video on YouTube](https://www.youtube.com/@FatihMakes)**
+> **Maintainer of this build:** [@jaivardhanpandey66-create](https://github.com/jaivardhanpandey66-create)
+> Built on the original Mark LIV by [FatihMakes](https://github.com/FatihMakes), reused under CC BY-NC 4.0.
+> See [Credits & Attribution](#credits--attribution) for what this build adds and who wrote what.
+
+> 📺 **[Watch the original project's setup video on YouTube](https://www.youtube.com/@FatihMakes)**
 
 A real-time voice AI that can hear, see, speak, and control your computer — on any OS. Supports Windows, macOS, and Linux. Built on the Gemini Live API for native audio streaming, delivering zero subscriptions and total digital autonomy.
 
@@ -394,14 +398,43 @@ Your voice is streamed to Google's Gemini Live API while a session is open; that
 Personal and non-commercial use only.
 Licensed under **[Creative Commons BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)**.
 
+Original Mark LIV — © 2026 FatihMakes. This build is distributed under the same
+licence, so the upstream credit and the non-commercial terms carry over unchanged.
+
 ---
 
-## 👤 Connect with the Creator
+## 👤 Credits & Attribution
 
-Engineered by a developer building a real-world JARVIS-style assistant.
-⭐ **Star the repository to support the journey to Mark 100.**
+### Original project
+
+Mark LIV was created by **[FatihMakes](https://github.com/FatihMakes)** — the voice
+loop, the Gemini Live integration, the face rig, the plugin system and the whole
+release line from Mark LI through Mark LV. That work is © 2026 FatihMakes and is
+reused here under CC BY-NC 4.0, which requires this attribution to stay in place.
 
 | Platform | Link |
 | --- | --- |
 | YouTube | [@FatihMakes](https://www.youtube.com/@FatihMakes) |
 | Instagram | [@fatihmakes](https://www.instagram.com/fatihmakes) |
+
+### This build — Mr Jai
+
+Maintained and extended by **[@jaivardhanpandey66-create](https://github.com/jaivardhanpandey66-create)**.
+The original Mark LIV release is the foundation; the work below is this build's own.
+
+| Area | What was added |
+| --- | --- |
+| **CHIP 3.0 holographic web UI** | A browser-based agent console — `chip_ui.html` / `chip_web.py` — with live status, tool wiring and a HUD that replaces the desktop-only front end for remote and phone use. |
+| **Native acceleration cores** | `chip_native.cpp` and a Rust core (`chip_rs/`) for the hot paths, with `build.sh`, `build_rs.sh` and `bench_native.py` to compile and measure them against the pure-Python path. |
+| **FULL CONTROL mode** | An explicit, visible mode for the operations that act on the machine, so a destructive tool call is never something the assistant did on its own. |
+| **DESK tools** | Desktop control surfaced to the agent as ordinary tools, so "open this" and "type that" go through the same audited path as everything else. |
+| **Gemini backend** | Direct OpenAI-compatible endpoint selection when a Gemini key is present, plus a corrected default model and working model picker and stats. |
+| **Cortex memory + Stark telemetry** | Automatic memory capture, recall injection into context, explicit memorize/recall tools, and link-aware state reflected in the CHIP status badges. |
+| **Past-talks memory** | The assistant can recall previous sessions, with regression tests covering the wiring. |
+| **Identity & hardening** | Creator identity in the system prompt, a blocklist, and a regression suite that asserts no live key is ever assigned to a legacy constant. |
+
+Regression tests for the hardening work live in `tests/` and run against the
+wiring rather than the UI, so a future change that reintroduces a secret or drops
+a blocklist entry fails loudly.
+
+⭐ **Star the repository to support the journey to Mark 100.**
