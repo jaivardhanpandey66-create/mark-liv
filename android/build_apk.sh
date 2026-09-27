@@ -10,7 +10,11 @@
 #    * the rule brain            (assets/web/offline_brain.js)
 #    * a Qwen GGUF model         (assets/models/*.gguf)
 #    * llama.cpp built for arm64 + x86_64, wrapped in libmarkliv.so
-#  and declares NO android.permission.INTERNET, so it cannot reach the network.
+#
+#  The local brain needs no network.  INTERNET is declared only for the
+#  optional cloud path: the user supplies an endpoint + API key at runtime
+#  (Qwen/DashScope, OpenRouter, Groq, any OpenAI-compatible API).  No key is
+#  compiled in, and the app is fully functional offline without one.
 # ===========================================================================
 set -euo pipefail
 
@@ -20,8 +24,8 @@ OUT="$HERE/build"
 DIST="$HERE/dist"
 SDK="${ANDROID_HOME:-$HOME/.local/share/android-sdk}"
 NDK_VER="${NDK_VER:-27.0.12077973}"
-LLAMA_SRC="${LLAMA_SRC:-/tmp/opencode/llama.cpp}"
-ABIS="${ABIS:-arm64-v8a x86_64}"
+LLAMA_SRC="${LLAMA_SRC:-/home/jai/llama.cpp}"
+ABIS="${ABIS:-arm64-v8a}"
 BT_VER="${BT_VER:-35.0.1}"
 PLATFORM="${PLATFORM:-android-35}"
 

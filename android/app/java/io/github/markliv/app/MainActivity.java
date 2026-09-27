@@ -28,10 +28,14 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
@@ -47,6 +51,8 @@ public class MainActivity extends Activity {
     private WebView web;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final ExecutorService brain = Executors.newSingleThreadExecutor();
+    private final ExecutorService cloud = Executors.newSingleThreadExecutor();
+    private volatile boolean cloudStop = false;
 
     private TextToSpeech tts;
     private SpeechRecognizer asr;
@@ -177,6 +183,353 @@ public class MainActivity extends Activity {
         return Math.max(2, Math.min(6, Runtime.getRuntime().availableProcessors()));
     }
 
+    // ---------------------------------------------------------- cloud (optional)
+    //
+    // The local brain above needs no network. This block is the *optional*
+    // cloud path: the user supplies an endpoint + key at runtime and we speak
+    // whichever dialect that provider uses —
+    //   "openai"    : OpenAI-compatible /chat/completions. Covers Qwen
+    //                 (DashScope compatible-mode), OpenRouter, Groq, Together,
+    //                 LM Studio, Ollama, and Anthropic's new compat endpoint.
+    //   "gemini"    : generativelanguage ...:streamGenerateContent
+    //   "anthropic" : api.anthropic.com /v1/messages
+    // The request is made here in Java rather than with fetch() in the WebView
+    // because the page is served from file:///android_asset/ — a "null"
+    // origin — so cross-origin XHR is blocked.
+    private static final String F_OPENAI    = "openai";
+    private static final String F_GEMINI    = "gemini";
+    private static final String F_ANTHROPIC = "anthropic";
+
+    /** JSON string literal, surrounding quotes included */
+    private static String jquote(String s) {
+        if (s == null) return "\"\"";
+        StringBuilder b = new StringBuilder("\"");
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '"':  b.append("\\\""); break;
+                case '\\': b.append("\\\\"); break;
+                case '\n': b.append("\\n");  break;
+                case '\r': b.append("\\r");  break;
+                case '\t': b.append("\\t");  break;
+                default:
+                    if (c < 0x20 || c == 0x2028 || c == 0x2029) b.append(String.format("\\u%04x", (int) c));
+                    else b.append(c);
+            }
+        }
+        return b.append('"').toString();
+    }
+
+    /** pull the first "content":"..." string out of a JSON payload; "" if none */
+    private static String contentOf(String json) {
+        return stringFor(json, "\"content\"");
+    }
+
+    /** first "<key>":"<string>" value in the payload, unescaped; "" if absent */
+    private static String stringFor(String json, String key) {
+        if (json == null) return "";
+        int i = json.indexOf(key);
+        while (i >= 0) {
+            int colon = json.indexOf(':', i + key.length());
+            if (colon < 0) return "";
+            int j = colon + 1;
+            while (j < json.length() && Character.isWhitespace(json.charAt(j))) j++;
+            if (j < json.length() && json.charAt(j) == '"') {
+                StringBuilder v = new StringBuilder();
+                for (j++; j < json.length(); ) {
+                    char ch = json.charAt(j);
+                    if (ch == '\\' && j + 1 < json.length()) {
+                        char e = json.charAt(++j);
+                        if (e == 'u' && j + 4 < json.length()) {
+                            try { v.append((char) Integer.parseInt(json.substring(j + 1, j + 5), 16)); j += 4; }
+                            catch (Exception ignored) { }
+                        } else {
+                            switch (e) {
+                                case 'n': v.append('\n'); break;
+                                case 't': v.append('\t'); break;
+                                case 'r': v.append('\r'); break;
+                                case 'b': v.append('\b'); break;
+                                case 'f': v.append('\f'); break;
+                                default:  v.append(e);
+                            }
+                        }
+                        j++;
+                    } else if (ch == '"') {
+                        return v.toString();
+                    } else {
+                        v.append(ch); j++;
+                    }
+                }
+                return v.toString();
+            }
+            i = json.indexOf(key, i + key.length());
+        }
+        return "";
+    }
+
+    /** a fully-formed request: where to POST, what to POST, how to auth, where the text hides */
+    private static final class Req {
+        String url = "", body = "", deltaKey = "\"content\"";
+        final java.util.LinkedHashMap<String, String> headers = new java.util.LinkedHashMap<>();
+    }
+
+    private static String role(org.json.JSONObject m) {
+        String r = m.optString("role", "user");
+        return r == null ? "user" : r;
+    }
+
+    private static String text(org.json.JSONObject m) {
+        return m.optString("content", "");
+    }
+
+    /**
+     * Translate the OpenAI-style message array the UI speaks into whatever the
+     * target provider expects.
+     */
+    private static Req buildReq(String flavor, String url, String key, String model,
+                                String messagesJson, int maxTokens, boolean probe) throws Exception {
+        Req r = new Req();
+        org.json.JSONArray in = new org.json.JSONArray(messagesJson);
+        int cap = Math.max(16, Math.min(4096, maxTokens));
+        String f = flavor == null ? F_OPENAI : flavor;
+
+        if (F_GEMINI.equals(f)) {
+            String sys = "", u = "";
+            org.json.JSONArray contents = new org.json.JSONArray();
+            for (int i = 0; i < in.length(); i++) {
+                org.json.JSONObject m = in.getJSONObject(i);
+                String role = role(m), t = text(m);
+                if ("system".equals(role)) { sys = t; continue; }
+                org.json.JSONObject c = new org.json.JSONObject();
+                c.put("role", "assistant".equals(role) ? "model" : "user");
+                c.put("parts", new org.json.JSONArray().put(new org.json.JSONObject().put("text", t)));
+                contents.put(c);
+            }
+            org.json.JSONObject body = new org.json.JSONObject();
+            if (!sys.isEmpty())
+                body.put("systemInstruction",
+                         new org.json.JSONObject().put("parts",
+                             new org.json.JSONArray().put(new org.json.JSONObject().put("text", sys))));
+            body.put("contents", contents);
+            body.put("generationConfig", new org.json.JSONObject()
+                     .put("maxOutputTokens", cap).put("temperature", 0.7));
+            r.url   = geminiUrl(url, model, !probe);
+            r.body  = body.toString();
+            r.deltaKey = "\"text\"";
+            r.headers.put("x-goog-api-key", key == null ? "" : key.trim());
+            return r;
+        }
+
+        if (F_ANTHROPIC.equals(f)) {
+            String sys = "";
+            org.json.JSONArray msgs = new org.json.JSONArray();
+            for (int i = 0; i < in.length(); i++) {
+                org.json.JSONObject m = in.getJSONObject(i);
+                String role = role(m), t = text(m);
+                if ("system".equals(role)) { sys = sys.isEmpty() ? t : sys + "\n" + t; continue; }
+                if (msgs.length() > 0) {           /* the API wants strict role alternation */
+                    org.json.JSONObject last = msgs.getJSONObject(msgs.length() - 1);
+                    if (role(last).equals(role)) {
+                        last.put("content", text(last) + "\n\n" + t);
+                        continue;
+                    }
+                }
+                org.json.JSONObject c = new org.json.JSONObject();
+                c.put("role", "assistant".equals(role) ? "assistant" : "user");
+                c.put("content", t);
+                msgs.put(c);
+            }
+            org.json.JSONObject body = new org.json.JSONObject();
+            body.put("model", model);
+            body.put("max_tokens", cap);
+            body.put("stream", !probe);
+            body.put("temperature", 0.7);
+            if (!sys.isEmpty()) body.put("system", sys);
+            body.put("messages", msgs);
+            r.url   = url.trim();
+            r.body  = body.toString();
+            r.deltaKey = "\"text\"";
+            r.headers.put("x-api-key", key == null ? "" : key.trim());
+            r.headers.put("anthropic-version", "2023-06-01");
+            return r;
+        }
+
+        /* OpenAI-compatible — the common case, and the only one that needs no reshaping */
+        org.json.JSONObject body = new org.json.JSONObject();
+        body.put("model", model);
+        body.put("stream", !probe);
+        body.put("max_tokens", cap);
+        body.put("temperature", 0.7);
+        body.put("messages", in);
+        r.url   = url.trim();
+        r.body  = body.toString();
+        r.deltaKey = "\"content\"";
+        r.headers.put("Authorization", "Bearer " + (key == null ? "" : key.trim()));
+        return r;
+    }
+
+    /**
+     * Accepts a full endpoint, one templated with {model}, or just the API
+     * base, and always normalises the method — a connection probe must never be
+     * sent to the streaming method, or the reply comes back as SSE fragments.
+     */
+    private static String geminiUrl(String url, String model, boolean stream) {
+        String u = url == null ? "" : url.trim();
+        String m = model == null ? "" : model.trim();
+
+        String extra = "";
+        int q = u.indexOf('?');
+        if (q >= 0) {
+            extra = u.substring(q + 1);
+            u = u.substring(0, q);
+            extra = extra.replaceAll("(^|&)alt=[^&]*", "$1")   /* we set alt ourselves */
+                         .replaceAll("&+", "&")
+                         .replaceAll("^&|&$", "");
+        }
+        if (u.contains("{model}")) {
+            u = u.replace("{model}", m);
+            int mm = u.indexOf("/models/");          /* drop any ":method" the template carried */
+            if (mm >= 0) {
+                int colon = u.indexOf(':', mm);
+                if (colon >= 0) u = u.substring(0, colon);
+            }
+        } else {
+            int i = u.indexOf("/models/");
+            if (i >= 0) u = u.substring(0, i + "/models/".length()) + m;
+            else        u = (u.endsWith("/") ? u : u + "/") + "models/" + m;
+        }
+
+        StringBuilder out = new StringBuilder(u).append(stream ? ":streamGenerateContent" : ":generateContent");
+        StringBuilder query = new StringBuilder();
+        if (stream) query.append("alt=sse");
+        if (!extra.isEmpty()) {
+            if (query.length() > 0) query.append('&');
+            query.append(extra);
+        }
+        if (query.length() > 0) out.append('?').append(query);
+        return out.toString();
+    }
+
+    private static String drain(InputStream in) {
+        if (in == null) return "";
+        StringBuilder b = new StringBuilder();
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(in, "UTF-8"), 4096)) {
+            char[] buf = new char[4096];
+            int n;
+            while ((n = r.read(buf)) > 0) b.append(buf, 0, n);
+        } catch (Exception ignored) { }
+        return b.toString();
+    }
+
+    private static String brief(String s) {
+        if (s == null) return "";
+        String t = s.replaceAll("\\s+", " ").trim();
+        if (t.isEmpty()) return "(empty response)";
+        /* providers report failures as {"error":{"message":"..."}} — show that, not raw JSON */
+        String msg = stringFor(t, "\"message\"");
+        if (msg.isEmpty()) msg = contentOf(t);
+        if (!msg.isEmpty()) t = msg;
+        return t.length() > 220 ? t.substring(0, 220) + "…" : t;
+    }
+
+    /**
+     * One chat completion against any supported provider dialect.
+     * Streams deltas to window.__mlNetToken and finishes with __mlNetDone /
+     * __mlNetError / __mlNetStatus (the last one only for a connection probe).
+     */
+    private void cloudChat(final String url, final String key, final String model,
+                           final String messagesJson, final int maxTokens,
+                           final boolean probe, final String flavor) {
+        final StringBuilder full = new StringBuilder();
+        HttpURLConnection c = null;
+        try {
+            String u = url == null ? "" : url.trim();
+            if (!u.startsWith("https://") && !u.startsWith("http://"))
+                throw new IllegalArgumentException("endpoint must start with http:// or https://");
+            if (messagesJson == null || !messagesJson.trim().startsWith("["))
+                throw new IllegalArgumentException("bad messages payload");
+
+            post("window.__mlNetStatus && window.__mlNetStatus(" + js("contacting " + hostOf(u)) + ")");
+
+            Req req = buildReq(flavor, u, key, model, messagesJson, maxTokens, probe);
+            c = (HttpURLConnection) new URL(req.url).openConnection();
+            c.setRequestMethod("POST");
+            c.setDoOutput(true);
+            c.setUseCaches(false);
+            c.setInstanceFollowRedirects(true);
+            c.setConnectTimeout(20000);
+            c.setReadTimeout(180000);
+            c.setRequestProperty("Content-Type", "application/json");
+            c.setRequestProperty("Accept", probe ? "application/json" : "text/event-stream");
+            c.setRequestProperty("Accept-Encoding", "identity");
+            for (java.util.Map.Entry<String, String> h : req.headers.entrySet())
+                if (h.getValue() != null && !h.getValue().trim().isEmpty())
+                    c.setRequestProperty(h.getKey(), h.getValue());
+
+            byte[] payload = req.body.getBytes("UTF-8");
+            c.setFixedLengthStreamingMode(payload.length);
+            try (OutputStream os = c.getOutputStream()) {
+                os.write(payload);
+                os.flush();
+            }
+
+            int code = c.getResponseCode();
+            if (code / 100 != 2)
+                throw new IllegalStateException("HTTP " + code + " — " + brief(drain(c.getErrorStream())));
+
+            String ctype = c.getContentType() == null ? "" : c.getContentType().toLowerCase(Locale.ROOT);
+            boolean sse = ctype.contains("text/event-stream");
+
+            if (probe) {
+                String all = drain(c.getInputStream());
+                String reply = stringFor(all, req.deltaKey);
+                post("window.__mlNetStatus && window.__mlNetStatus(" +
+                        js("connected — " + (reply.isEmpty() ? "endpoint reachable" : brief(reply))) + ")");
+                return;
+            }
+
+            if (sse) {
+                try (BufferedReader rd = new BufferedReader(new InputStreamReader(c.getInputStream(), "UTF-8"), 8192)) {
+                    String line;
+                    while ((line = rd.readLine()) != null) {
+                        if (cloudStop) break;
+                        String t = line.trim();
+                        if (!t.startsWith("data:")) continue;
+                        String data = t.substring(5).trim();
+                        if (data.isEmpty()) continue;
+                        if ("[DONE]".equals(data)) break;
+                        String d = stringFor(data, req.deltaKey);
+                        if (!d.isEmpty()) {
+                            full.append(d);
+                            post("window.__mlNetToken && window.__mlNetToken(" + js(d) + ")");
+                        }
+                    }
+                }
+            } else {
+                /* provider ignored stream:true — take the whole body at once */
+                String all = drain(c.getInputStream());
+                String d = stringFor(all, req.deltaKey);
+                if (d.isEmpty()) throw new IllegalStateException("no content in reply: " + brief(all));
+                full.append(d);
+                post("window.__mlNetToken && window.__mlNetToken(" + js(d) + ")");
+            }
+
+            post("window.__mlNetDone && window.__mlNetDone(" + js(full.toString()) + ")");
+
+        } catch (Throwable t) {
+            Log.e(TAG, "cloudChat", t);
+            String m = t.getMessage();
+            post("window.__mlNetError && window.__mlNetError(" +
+                    js(m == null || m.isEmpty() ? t.getClass().getSimpleName() : m) + ")");
+        } finally {
+            if (c != null) try { c.disconnect(); } catch (Exception ignored) { }
+        }
+    }
+
+    private static String hostOf(String url) {
+        try { return new URL(url).getHost(); } catch (Exception e) { return url; }
+    }
+
     // -------------------------------------------------------------- JS bridge
 
     private class Bridge {
@@ -240,7 +593,26 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
-        public void stop() { Llama.stop(); }
+        public void stop() { Llama.stop(); cloudStop = true; }
+
+        // ---- optional cloud brain (user-supplied endpoint + key) ----
+
+        @JavascriptInterface
+        public void netChat(final String url, final String key, final String model,
+                            final String messagesJson, final int maxTokens, final String flavor) {
+            cloudStop = false;
+            cloud.execute(() -> cloudChat(url, key, model, messagesJson, maxTokens, false, flavor));
+        }
+
+        @JavascriptInterface
+        public void netTest(final String url, final String key, final String model, final String flavor) {
+            cloudStop = false;
+            String probe = "[{\"role\":\"user\",\"content\":\"Reply with the single word OK\"}]";
+            cloud.execute(() -> cloudChat(url, key, model, probe, 16, true, flavor));
+        }
+
+        @JavascriptInterface
+        public void netStop() { cloudStop = true; }
 
         @JavascriptInterface
         public void speak(String text) {
@@ -515,6 +887,7 @@ public class MainActivity extends Activity {
         try { if (asr != null) asr.destroy(); } catch (Throwable ignored) { }
         brain.execute(Llama::freeModel);
         brain.shutdown();
+        cloud.shutdownNow();
     }
 
     private static String esc(String s) {

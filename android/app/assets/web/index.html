@@ -55,17 +55,34 @@ button.go{background:var(--or);border-color:var(--or);color:#180b02;font-weight:
 button:disabled{opacity:.45}
 #row2{display:flex;gap:6px;padding:0 10px 8px;background:#101216;overflow-x:auto}
 #row2 button{font-size:10px;padding:7px 9px}
+#b-cfg{color:var(--ok);border-color:rgba(57,255,158,.45)}
+#sheet{position:fixed;inset:0;background:rgba(5,6,8,.92);z-index:50;display:none;overflow-y:auto;
+       padding:calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom))}
+#sheet.open{display:block}
+#sheet h2{font-size:12px;letter-spacing:3px;color:var(--or);margin-bottom:3px}
+#sheet p.note{font-size:10px;color:var(--dim);line-height:1.5;margin-bottom:12px}
+.field{margin-bottom:10px}
+.field label{display:block;font-size:9px;letter-spacing:2px;color:var(--dim);text-transform:uppercase;margin-bottom:4px}
+.field input,.field select{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+       border-radius:5px;padding:10px;font:inherit;font-size:12px;outline:none}
+.field input:focus,.field select:focus{border-color:rgba(255,122,24,.6)}
+#sheet .row{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+#sheet .row button{flex:1;min-width:88px}
+#cfgstat{font-size:10px;color:var(--dim);margin-top:10px;line-height:1.5;min-height:14px}
+#cfgstat.ok{color:var(--ok)} #cfgstat.bad{color:var(--bad)} #cfgstat.busy{color:var(--or2)}
+#modetxt{color:var(--dim)}
 </style>
 </head>
 <body>
 <header>
   <div>
     <h1>MARK LIV</h1>
-    <div class="sub" id="sub">offline core // no uplink</div>
+    <div class="sub" id="sub">local brain // api optional</div>
   </div>
   <div class="spacer"></div>
   <span class="pill" id="p-llm">LLM …</span>
-  <span class="pill on" id="p-net">OFFLINE</span>
+  <span class="pill" id="p-net">LOCAL</span>
+  <button id="b-cfg" style="padding:6px 9px;font-size:11px" title="API settings">⚙</button>
 </header>
 
 <div id="orb"><div class="ring" id="ring"><div class="core"></div></div></div>
@@ -103,6 +120,58 @@ button:disabled{opacity:.45}
   <button id="b-send" class="go">SEND</button>
 </footer>
 
+<div id="sheet">
+  <h2>CLOUD BRAIN</h2>
+  <p class="note">
+    Optional. MARK LIV already answers offline with the local Qwen model and the
+    rule core. Add any OpenAI-compatible API below and it will use that for
+    questions the local model is too small for. The key is stored on this phone
+    only, in this app's private storage — it is never bundled in the APK.
+    Leave it empty and nothing ever leaves the device.
+  </p>
+
+  <div class="field">
+    <label for="f-prov">Preset</label>
+    <select id="f-prov">
+      <option value="qwen">Qwen — DashScope</option>
+      <option value="openrouter">OpenRouter</option>
+      <option value="groq">Groq</option>
+      <option value="gemini">Google Gemini</option>
+      <option value="claude">Anthropic Claude</option>
+      <option value="ollama">Ollama on this network</option>
+      <option value="custom">Custom</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="f-flavor">API style</label>
+    <select id="f-flavor">
+      <option value="openai">OpenAI-compatible</option>
+      <option value="gemini">Google Gemini</option>
+      <option value="anthropic">Anthropic /v1/messages</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="f-url">Endpoint</label>
+    <input id="f-url" type="url" spellcheck="false" autocapitalize="off" placeholder="https://…/v1/chat/completions">
+  </div>
+  <div class="field">
+    <label for="f-model">Model</label>
+    <input id="f-model" type="text" spellcheck="false" autocapitalize="off" placeholder="qwen-plus">
+  </div>
+  <div class="field">
+    <label for="f-key">API key</label>
+    <input id="f-key" type="password" spellcheck="false" autocapitalize="off" placeholder="paste any AI provider key">
+  </div>
+
+  <div class="row">
+    <button id="f-save" class="go">SAVE</button>
+    <button id="f-test">TEST</button>
+    <button id="f-clear">CLEAR</button>
+    <button id="f-close">CLOSE</button>
+  </div>
+  <div id="cfgstat"></div>
+</div>
+
 <script src="offline_brain.js"></script>
 <script>
 (function(){
@@ -111,15 +180,42 @@ button:disabled{opacity:.45}
       ring=document.getElementById('ring'), state=document.getElementById('state'),
       sub=document.getElementById('sub'), pLlm=document.getElementById('p-llm');
 
-  var SYS = "You are MARK LIV, a private offline assistant running entirely on this phone. "+
-            "No internet, no cloud, no API key. Be concise, warm and practical. "+
+  var SYS = "You are MARK LIV, a private assistant. By default you run fully offline on this phone "+
+            "(local Qwen model, no cloud, no API key); when the user has configured a cloud API you are "+
+            "answering through it. Be concise, warm and practical. "+
             "You were built by Mr Jai. The companion project CHIP is a holographic J.A.R.V.I.S. "+
             "agent with a holographic web UI, Rust and C cores, tool calling and telemetry.";
 
-  var mode = localStorage.getItem('ml_mode') || 'auto';   // auto | rules | llm
+  var mode = localStorage.getItem('ml_mode') || 'auto';   // auto | rules | llm | cloud
   var vox  = localStorage.getItem('ml_vox') !== 'off';
   var busy = false, streaming = false, botEl = null, botText = '', history = [];
   var llmReady = false, device = {};
+  var cloudOn = false, cloudBusy = false;
+
+  /* any provider works; flavor picks the wire dialect, the rest just fills the form */
+  var PROVIDERS = {
+    qwen:       { flavor:'openai',    url:'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model:'qwen-plus' },
+    openrouter: { flavor:'openai',    url:'https://openrouter.ai/api/v1/chat/completions',                   model:'qwen/qwen-2.5-7b-instruct' },
+    groq:       { flavor:'openai',    url:'https://api.groq.com/openai/v1/chat/completions',                  model:'qwen2.5-7b-instruct' },
+    gemini:     { flavor:'gemini',    url:'https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse', model:'gemini-3.8-flash' },
+    claude:     { flavor:'anthropic', url:'https://api.anthropic.com/v1/messages',                          model:'claude-sonnet-5' },
+    ollama:     { flavor:'openai',    url:'http://10.0.2.2:11434/v1/chat/completions',                      model:'qwen2.5:3b' },
+    custom:     { flavor:'openai',    url:'', model:'' }
+  };
+  var FLAVORS = { openai:1, gemini:1, anthropic:1 };
+  var cfg = {
+    prov:   localStorage.getItem('ml_prov')   || 'qwen',
+    flavor: localStorage.getItem('ml_flavor') || '',
+    url:    localStorage.getItem('ml_url')    || '',
+    model:  localStorage.getItem('ml_model')  || '',
+    key:    localStorage.getItem('ml_key')    || ''
+  };
+  if(!cfg.flavor) cfg.flavor = (PROVIDERS[cfg.prov]||PROVIDERS.custom).flavor;
+  if(!cfg.url   && PROVIDERS[cfg.prov]) cfg.url   = PROVIDERS[cfg.prov].url;
+  if(!cfg.model && PROVIDERS[cfg.prov]) cfg.model = PROVIDERS[cfg.prov].model;
+  function cloudReady(){
+    return !!(cfg.key && /^https?:\/\//.test(cfg.url||'') && cfg.model);
+  }
 
   function add(role,text){
     var d=document.createElement('div');
@@ -152,6 +248,7 @@ button:disabled{opacity:.45}
     else history.push({u:pendingQ,a:'[no answer — the local model returned nothing. Try rephrase, or switch brain to rules.]'});
     trim();
     botEl=null; botText=''; pLlm.className='pill'+(llmReady?' on':''); pLlm.textContent = llmReady?'LLM READY':'LLM …';
+    paintPills();
     busy=false;
   };
   window.__mlError = function(e){ sys('model: '+e); llmReady=false; pLlm.textContent='LLM OFF'; pLlm.className='pill'; };
@@ -171,6 +268,58 @@ button:disabled{opacity:.45}
   window.__mlHeard = function(t){ if(t){ input.value=t; } };
   window.__mlSpeak = function(){};
 
+  /* ---- optional cloud brain ---- */
+  function cloudFinishUI(){
+    cloudBusy=false; streaming=false;
+    ring.classList.remove('think'); setState('online');
+    var bs=document.getElementById('b-send');
+    bs.disabled=false; bs.textContent='SEND';
+  }
+  window.__mlNetToken = function(p){
+    if(!botEl) return;
+    botText += p; botEl.textContent = botText; scroll();
+  };
+  window.__mlNetDone = function(full){
+    cloudFinishUI();
+    if(full && !botText) botText = full;
+    if(botEl && botText){ botEl.textContent=botText; history.push({u:pendingQ,a:botText}); trim(); say(botText); }
+    else if(botEl) history.push({u:pendingQ,a:'(the cloud model returned nothing)'});
+    botEl=null; botText='';
+    paintPills();
+    busy=false;
+  };
+  window.__mlNetError = function(e){
+    cloudFinishUI();
+    sys('cloud: '+e);
+    cloudOn=false; paintPills();
+    botEl=null; botText='';
+    if(mode==='auto' && cloudReady() && llmReady){
+      /* retry on the local model without leaving the user's question twice in the feed */
+      var dup = feed.querySelector('.msg.user:last-child');
+      if(dup) dup.remove();
+      busy=false;
+      sys('falling back to the local model');
+      ask(pendingQ);
+      return;
+    }
+    var b=add('bot','');
+    typeOut(b, cloudReady()
+      ? 'The cloud API call failed, sir ('+e+').'
+      : 'No working cloud API, sir. Tap ⚙ to add a key, or reload the local model.');
+    history.push({u:pendingQ,a:'[cloud error: '+e+']'});
+    busy=false;
+  };
+  window.__mlNetStatus = function(s){
+    var el=document.getElementById('cfgstat');
+    el.textContent = s||''; el.className='busy';
+  };
+  function paintPills(){
+    var p=document.getElementById('p-net');
+    if(cloudBusy){ p.textContent='CLOUD…'; p.className='pill busy'; }
+    else if(cloudOn){ p.textContent='CLOUD'; p.className='pill on'; }
+    else { p.textContent='LOCAL'; p.className='pill'; }
+  }
+
   function say(t){
     if(!vox || !t || !hasAndroid()) return;
     try{ Android.speak(t); }catch(e){}
@@ -180,7 +329,9 @@ button:disabled{opacity:.45}
   function boot(){
     if(!hasAndroid()){ setState('browser mode — rule brain only'); return; }
     try{ device = JSON.parse(Android.device()); }catch(e){ device={}; }
-    sub.textContent = 'offline core // no uplink // ' + (device.model||'device');
+    sub.textContent = (cloudReady() ? 'local brain // cloud ready' : 'local brain // api optional')
+                      + ' // ' + (device.model||'device');
+    paintPills();
     Android.loadModel('bundled');
   }
 
@@ -216,11 +367,31 @@ button:disabled{opacity:.45}
     return true;
   }
 
+  function cloudAnswer(q){
+    if(!cloudReady() || !hasAndroid()) return false;
+    var msgs = [{role:'system', content:SYS}];
+    history.forEach(function(h){
+      msgs.push({role:'user', content:h.u});
+      msgs.push({role:'assistant', content:h.a});
+    });
+    msgs.push({role:'user', content:q});
+    pendingQ = q;
+    botEl = add('bot','');
+    botEl.innerHTML='<span class="caret">▍</span>';
+    botText=''; streaming=true; cloudBusy=true; cloudOn=true;
+    ring.classList.add('think'); setState('thinking');
+    document.getElementById('b-send').textContent='STOP';
+    paintPills();
+    try{ Android.netChat(cfg.url, cfg.key, cfg.model, JSON.stringify(msgs), Math.min(1024, 200 + q.length*4), cfg.flavor); }
+    catch(e){ window.__mlNetError(String(e)); }
+    return true;
+  }
+
   function ask(q){
     if(!q || busy) return;
     busy=true;
     add('user',q); input.value='';
-    var ans = (mode==='llm') ? null : ruleAnswer(q);
+    var ans = (mode==='llm'||mode==='cloud') ? null : ruleAnswer(q);
     if(ans!==null && ans!==undefined){
       var b=add('bot',''); typeOut(b,ans);
       history.push({u:q,a:ans}); trim(); say(ans);
@@ -228,10 +399,19 @@ button:disabled{opacity:.45}
       if(window.CHIPBrain){ var n=document.getElementById('modetxt'); if(n) n.textContent='last: rule core ('+window.CHIPBrain.skills().length+' skills)'; }
       return;
     }
-    if(mode==='rules'){ var b2=add('bot',''); typeOut(b2,'Rule brain only, sir — tap "brain: llm" to let the local model answer.'); busy=false; return; }
+    if(mode==='rules'){ var b2=add('bot',''); typeOut(b2,'Rule brain only, sir — tap "brain" to change it.'); busy=false; return; }
+    if(mode==='cloud'){
+      if(cloudAnswer(q)) return;
+      var bc=add('bot','');
+      typeOut(bc,'No cloud API is configured, sir. Tap ⚙ and paste a key — Qwen, OpenRouter or any OpenAI-compatible endpoint.');
+      busy=false; return;
+    }
+    /* auto: a configured cloud brain answers first, local model is the fallback */
+    if(cloudReady() && cloudAnswer(q)) return;
     if(llmAnswer(q)) return;
     var b3=add('bot','');
-    typeOut(b3,'The local model is not loaded yet, sir. Tap "reload model". Meanwhile the rule core handles: '+
+    typeOut(b3,'No brain is available yet, sir. Tap ⚙ to add an API key, or "reload model" for the local Qwen. '+
+              'The rule core already handles: '+
               (window.CHIPBrain?window.CHIPBrain.skills().slice(0,10).join(', '):'math, time, notes, conversions'));
     busy=false;
   }
@@ -261,22 +441,28 @@ button:disabled{opacity:.45}
 
   /* ---------------- wiring ---------------- */
   document.getElementById('b-send').addEventListener('click',function(){
-    if(streaming){ if(hasAndroid()) Android.stop(); return; }
+    if(streaming){
+      if(hasAndroid()){ Android.stop(); Android.netStop(); }
+      return;
+    }
     ask(input.value.trim());
   });
   input.addEventListener('keydown',function(e){ if(e.key==='Enter') ask(input.value.trim()); });
 
   var bMode=document.getElementById('b-mode');
+  var MODES=['auto','llm','cloud','rules'];
   function refreshMode(){
     bMode.textContent='brain: '+mode;
-    bMode.classList.toggle('on', mode==='llm');
+    bMode.classList.toggle('on', mode==='llm'||mode==='cloud');
     document.getElementById('modetxt').textContent =
       mode==='rules' ? 'brain: rules only — instant commands, no model.' :
-      mode==='llm' ? 'brain: local model only.' :
-      'brain: auto — commands to the rule core, questions to the local model.';
+      mode==='llm'   ? 'brain: local model only (on-device Qwen).' :
+      mode==='cloud' ? 'brain: cloud API only — needs a key in ⚙.' :
+      (cloudReady() ? 'brain: auto — commands to the rule core, questions to your cloud API, local Qwen as backup.'
+                    : 'brain: auto — commands to the rule core, questions to the local model.');
   }
   bMode.addEventListener('click',function(){
-    mode = mode==='auto'?'llm': mode==='llm'?'rules':'auto';
+    mode = MODES[(MODES.indexOf(mode)+1) % MODES.length];
     localStorage.setItem('ml_mode',mode); refreshMode(); sys('brain: '+mode);
   });
 
@@ -302,13 +488,102 @@ button:disabled{opacity:.45}
     ask('help');
   });
 
+  /* ---------------- API settings sheet ---------------- */
+  var sheet=document.getElementById('sheet'),
+      fProv=document.getElementById('f-prov'), fFlavor=document.getElementById('f-flavor'),
+      fUrl=document.getElementById('f-url'),
+      fModel=document.getElementById('f-model'), fKey=document.getElementById('f-key'),
+      cfgStat=document.getElementById('cfgstat');
+
+  function fillForm(){
+    fProv.value = PROVIDERS[cfg.prov] ? cfg.prov : 'custom';
+    fFlavor.value = FLAVORS[cfg.flavor] ? cfg.flavor : 'openai';
+    fUrl.value = cfg.url||''; fModel.value = cfg.model||''; fKey.value = cfg.key||'';
+  }
+  function setStat(t,cls){ cfgStat.textContent=t||''; cfgStat.className=cls||''; }
+
+  document.getElementById('b-cfg').addEventListener('click',function(){
+    fillForm(); setStat(cloudReady() ? 'Saved: ' + cfg.model + ' @ ' + cfg.url : 'No API saved — running fully offline.', cloudReady()?'ok':'');
+    sheet.classList.add('open');
+  });
+  document.getElementById('f-close').addEventListener('click',function(){ sheet.classList.remove('open'); });
+
+  fProv.addEventListener('change',function(){
+    var p=PROVIDERS[fProv.value]||PROVIDERS.custom;
+    fFlavor.value = p.flavor;
+    fUrl.value=p.url||''; fModel.value=p.model||'';
+  });
+  fFlavor.addEventListener('change',function(){
+    /* keep the endpoint consistent with the dialect unless it was hand-typed */
+    var p=PROVIDERS[fProv.value];
+    if(p && p.flavor!==fFlavor.value){
+      var alt=null;
+      for(var k in PROVIDERS){ if(PROVIDERS[k].flavor===fFlavor.value && PROVIDERS[k].url){ alt=PROVIDERS[k]; break; } }
+      if(alt){ fUrl.value=alt.url; fModel.value=alt.model; }
+    }
+  });
+
+  function readForm(){
+    cfg.prov   = fProv.value;
+    cfg.flavor = fFlavor.value;
+    cfg.url    = fUrl.value.trim();
+    cfg.model  = fModel.value.trim();
+    cfg.key    = fKey.value.trim();
+  }
+  function persist(){
+    localStorage.setItem('ml_prov', cfg.prov);
+    localStorage.setItem('ml_flavor', cfg.flavor);
+    localStorage.setItem('ml_url', cfg.url);
+    localStorage.setItem('ml_model', cfg.model);
+    localStorage.setItem('ml_key', cfg.key);
+  }
+
+  document.getElementById('f-save').addEventListener('click',function(){
+    readForm(); persist();
+    cloudOn=false; paintPills(); refreshMode();
+    if(cloudReady()){
+      setStat('Saved. Cloud brain armed: ' + cfg.model + ' (' + cfg.flavor + ')', 'ok');
+      sub.textContent='local brain // cloud ready // ' + (device.model||'device');
+      sys('cloud API saved: ' + cfg.model);
+    } else {
+      setStat('Saved, but incomplete — endpoint, model and key are all required.', 'bad');
+    }
+  });
+
+  document.getElementById('f-test').addEventListener('click',function(){
+    readForm();
+    if(!hasAndroid()){ setStat('Testing needs the Android app.', 'bad'); return; }
+    if(!cfg.key){ setStat('Enter an API key first.', 'bad'); return; }
+    setStat('Testing ' + cfg.model + '…', 'busy');
+    Android.netTest(cfg.url, cfg.key, cfg.model, cfg.flavor);
+  });
+
+  document.getElementById('f-clear').addEventListener('click',function(){
+    cfg.key=''; cfg.url=''; cfg.model=''; cfg.prov='qwen'; cfg.flavor='openai';
+    persist(); fillForm(); cloudOn=false; paintPills(); refreshMode();
+    setStat('Cleared. Fully offline again.', '');
+    sub.textContent='local brain // api optional // ' + (device.model||'device');
+  });
+
+  /* a successful probe turns the pill green */
+  var _netStatus = window.__mlNetStatus;
+  window.__mlNetStatus = function(s){
+    _netStatus(s);
+    if(s && s.indexOf('connected')===0){
+      setStat(s, 'ok'); cloudOn=true; paintPills();
+    }
+  };
+
   add('bot','');
   typeOut(feed.lastChild.querySelector('.body'),
-    'MARK LIV online, sir. Fully offline — no API key, no PC, no internet. '+
-    'I carry a local Qwen model for questions, and a rule core for commands. '+
+    'MARK LIV online, sir. The local Qwen model and the rule core work with no network at all. '+
+    'If you want bigger answers, tap ⚙ and paste any API key — Qwen, OpenRouter, Groq, anything '+
+    'OpenAI-compatible — and I will use that instead, keeping the local model as backup. '+
     'Try: "why is the sky blue", "2+2", "10 km in miles", "note buy milk", "help".');
   setState('online');
   boot();
+  refreshMode();
+  paintPills();
 })();
 </script>
 </body>

@@ -1,14 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  MARK LIV — offline Android build.
-  No android.permission.INTERNET: this app cannot reach the network at all.
-  Everything (UI, rule brain, Qwen GGUF model) ships inside the APK.
+  MARK LIV — Android build.
+
+  The local brain is still fully on-device (UI, rule core and a Qwen GGUF model
+  all ship inside the APK and work with no network at all).
+
+  INTERNET is declared for the *optional* cloud path: the app asks the user for
+  an API key at runtime (Qwen / DashScope, OpenRouter, or any OpenAI-compatible
+  endpoint) and only talks to the network if a key was entered. No key is baked
+  into the APK, and the app is fully functional without one.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.markliv.app"
     android:versionCode="1"
     android:versionName="1.0.0">
 
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
