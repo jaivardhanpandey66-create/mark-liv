@@ -1,0 +1,9 @@
+# build output
+build/
+*.apk
+*.keystore
+
+# the local LLM weights: ~491 MB, too large for a normal Git push.
+# Fetch it with:  ./fetch_model.sh
+app/assets/models/*.gguf
+*.idsig

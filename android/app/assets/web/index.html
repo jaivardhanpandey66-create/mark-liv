@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>MARK LIV // offline</title>
+<style>
+:root{--bg:#0b0c0f;--panel:#14161a;--panel2:#1b1e24;--line:#2a2e36;--or:#ff7a18;--or2:#ffa04d;--ink:#e8e4de;--dim:#8b8f98;--ok:#39ff9e;--bad:#ff4f6a}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+     display:flex;flex-direction:column;overflow:hidden}
+header{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line);
+       padding-top:calc(10px + env(safe-area-inset-top));background:#101216}
+h1{font-size:15px;letter-spacing:4px;font-weight:800;color:var(--or);text-shadow:0 0 14px rgba(255,122,24,.5)}
+.sub{font-size:9px;letter-spacing:2px;color:var(--dim);text-transform:uppercase}
+.spacer{flex:1}
+.pill{font-size:9px;letter-spacing:1px;padding:4px 7px;border:1px solid var(--line);border-radius:3px;color:var(--dim);white-space:nowrap}
+.pill.on{color:var(--ok);border-color:rgba(57,255,158,.4)}
+.pill.busy{color:var(--or2);border-color:rgba(255,122,24,.5)}
+#orb{display:grid;place-items:center;padding:12px 0 6px;position:relative}
+.ring{width:74px;height:74px;border-radius:50%;border:2px solid rgba(255,122,24,.25);position:relative;
+      display:grid;place-items:center}
+.ring::before{content:"";position:absolute;inset:-7px;border:1px dashed rgba(255,122,24,.35);border-radius:50%;animation:spin 7s linear infinite}
+.ring::after{content:"";position:absolute;inset:9px;border:1px solid rgba(255,122,24,.2);border-radius:50%}
+.core{width:30px;height:30px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#ffb066,#ff6a00 60%,#7a2f00);
+      box-shadow:0 0 18px rgba(255,122,24,.7);animation:pulse 2.6s ease-in-out infinite}
+.ring.think .core{animation:pulse .7s ease-in-out infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{transform:scale(1);opacity:.9}50%{transform:scale(1.12);opacity:1}}
+#state{font-size:9px;letter-spacing:3px;color:var(--dim);text-align:center;padding-bottom:8px;text-transform:uppercase}
+#feed{flex:1;overflow-y:auto;padding:8px 12px 4px;display:flex;flex-direction:column;gap:8px}
+.msg{max-width:88%;padding:8px 10px;border:1px solid var(--line);background:var(--panel);border-radius:6px;white-space:pre-wrap;word-break:break-word}
+.msg .who{font-size:8px;letter-spacing:2px;color:var(--dim);text-transform:uppercase;margin-bottom:3px}
+.msg.user{align-self:flex-end;background:#20242c;border-color:#3a3f49}
+.msg.bot{align-self:flex-start;border-color:rgba(255,122,24,.28)}
+.msg.bot .who{color:var(--or2)}
+.msg.sys{align-self:center;max-width:96%;font-size:10px;color:var(--dim);text-align:center;border-style:dashed;background:transparent}
+.msg .caret{color:var(--or);animation:blink .8s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+#projects{border-top:1px solid var(--line);background:#101216;padding:8px 12px;display:flex;gap:8px;overflow-x:auto}
+.proj{flex:0 0 auto;min-width:172px;border:1px solid var(--line);background:var(--panel);border-radius:6px;padding:8px 10px}
+.proj h3{font-size:11px;letter-spacing:2px;color:var(--or2);margin-bottom:3px}
+.proj p{font-size:10px;color:var(--dim);line-height:1.4}
+.proj a{color:var(--or2);font-size:10px;text-decoration:none;border-bottom:1px dotted var(--or2)}
+.proj.self{border-color:rgba(255,122,24,.45)}
+footer{border-top:1px solid var(--line);background:#101216;padding:8px 10px;padding-bottom:calc(8px + env(safe-area-inset-bottom));
+       display:flex;gap:6px;align-items:center}
+input{flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:5px;padding:11px 10px;font:inherit;outline:none}
+input:focus{border-color:rgba(255,122,24,.6)}
+button{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:5px;padding:11px 12px;
+       font:inherit;font-size:11px;letter-spacing:1px;cursor:pointer}
+button.on{color:var(--or);border-color:rgba(255,122,24,.5)}
+button.go{background:var(--or);border-color:var(--or);color:#180b02;font-weight:700}
+button:disabled{opacity:.45}
+#row2{display:flex;gap:6px;padding:0 10px 8px;background:#101216;overflow-x:auto}
+#row2 button{font-size:10px;padding:7px 9px}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>MARK LIV</h1>
+    <div class="sub" id="sub">offline core // no uplink</div>
+  </div>
+  <div class="spacer"></div>
+  <span class="pill" id="p-llm">LLM …</span>
+  <span class="pill on" id="p-net">OFFLINE</span>
+</header>
+
+<div id="orb"><div class="ring" id="ring"><div class="core"></div></div></div>
+<div id="state">booting</div>
+
+<div id="feed"></div>
+
+<div id="projects">
+  <div class="proj self">
+    <h3>MARK LIV</h3>
+    <p>This app. Graphite/orange reactor, local Qwen brain, zero network. By Mr Jai.</p>
+  </div>
+  <div class="proj">
+    <h3>CHIP</h3>
+    <p>Holographic J.A.R.V.I.S. agent — Rust + C cores, SSE streaming, tool calling, CORTEX memory, STARK telemetry.</p>
+    <a href="https://github.com/jaivardhanpandey66-create/chip" target="_blank">github</a>
+  </div>
+  <div class="proj">
+    <h3>MODES</h3>
+    <p id="modetxt">brain: auto — commands to the rule core, questions to the local model.</p>
+  </div>
+</div>
+
+<div id="row2">
+  <button id="b-mode">brain: auto</button>
+  <button id="b-llm">reload model</button>
+  <button id="b-pick">load .gguf</button>
+  <button id="b-vox">vox: on</button>
+  <button id="b-mic">mic</button>
+  <button id="b-help">help</button>
+</div>
+
+<footer>
+  <input id="input" placeholder="ask anything, sir…" autocomplete="off" autocapitalize="off" spellcheck="false">
+  <button id="b-send" class="go">SEND</button>
+</footer>
+
+<script src="offline_brain.js"></script>
+<script>
+(function(){
+  "use strict";
+  var feed=document.getElementById('feed'), input=document.getElementById('input'),
+      ring=document.getElementById('ring'), state=document.getElementById('state'),
+      sub=document.getElementById('sub'), pLlm=document.getElementById('p-llm');
+
+  var SYS = "You are MARK LIV, a private offline assistant running entirely on this phone. "+
+            "No internet, no cloud, no API key. Be concise, warm and practical. "+
+            "You were built by Mr Jai. The companion project CHIP is a holographic J.A.R.V.I.S. "+
+            "agent with a holographic web UI, Rust and C cores, tool calling and telemetry.";
+
+  var mode = localStorage.getItem('ml_mode') || 'auto';   // auto | rules | llm
+  var vox  = localStorage.getItem('ml_vox') !== 'off';
+  var busy = false, streaming = false, botEl = null, botText = '', history = [];
+  var llmReady = false, device = {};
+
+  function add(role,text){
+    var d=document.createElement('div');
+    d.className='msg '+role;
+    d.innerHTML='<div class="who">'+(role==='user'?'you':role==='sys'?'system':'mark liv')+'</div><div class="body"></div>';
+    d.querySelector('.body').textContent=text;
+    feed.appendChild(d); feed.scrollTop=feed.scrollHeight;
+    return d.querySelector('.body');
+  }
+  function sys(t){ add('sys',t); }
+  function setState(t){ state.textContent=t; }
+  function scroll(){ feed.scrollTop=feed.scrollHeight; }
+
+  function hasAndroid(){ return typeof Android !== 'undefined'; }
+
+  /* ---------------- native hooks ---------------- */
+  window.__mlToken = function(p){
+    if(!botEl) return;
+    botText += p;
+    botEl.textContent = botText;
+    scroll();
+  };
+  window.__mlStatus = function(s){ pLlm.textContent = s; pLlm.className='pill busy'; };
+  window.__mlDone = function(full){
+    streaming=false; ring.classList.remove('think'); setState('online');
+    document.getElementById('b-send').disabled=false;
+    document.getElementById('b-send').textContent='SEND';
+    if(full && !botText) botText = full;
+    if(botEl && botText){ botEl.textContent = botText; history.push({u:pendingQ,a:botText}); trim(); say(botText); }
+    else history.push({u:pendingQ,a:'[no answer — the local model returned nothing. Try rephrase, or switch brain to rules.]'});
+    trim();
+    botEl=null; botText=''; pLlm.className='pill'+(llmReady?' on':''); pLlm.textContent = llmReady?'LLM READY':'LLM …';
+    busy=false;
+  };
+  window.__mlError = function(e){ sys('model: '+e); llmReady=false; pLlm.textContent='LLM OFF'; pLlm.className='pill'; };
+  window.__mlLoaded = function(info){
+    llmReady = true; pLlm.className='pill on'; pLlm.textContent='LLM READY';
+    pLlm.title = info||'';
+    sys('local model loaded'+(info?': '+info:''));
+  };
+  window.__mlPicked = function(path){ sys(path?('model installed: '+path.split('/').pop()):'model pick cancelled'); };
+  window.__mlMic = function(s){
+    var b=document.getElementById('b-mic');
+    if(s==='listening'||s==='ready'){ b.classList.add('on'); b.textContent='● listening'; }
+    else { b.classList.remove('on'); b.textContent='mic'; }
+    if(s&&s.indexOf('error')===0) sys('mic: '+(s==='denied'?'permission denied':'unavailable here'));
+  };
+  window.__mlPartial = function(t){ input.value=t; };
+  window.__mlHeard = function(t){ if(t){ input.value=t; } };
+  window.__mlSpeak = function(){};
+
+  function say(t){
+    if(!vox || !t || !hasAndroid()) return;
+    try{ Android.speak(t); }catch(e){}
+  }
+
+  /* ---------------- device + model boot ---------------- */
+  function boot(){
+    if(!hasAndroid()){ setState('browser mode — rule brain only'); return; }
+    try{ device = JSON.parse(Android.device()); }catch(e){ device={}; }
+    sub.textContent = 'offline core // no uplink // ' + (device.model||'device');
+    Android.loadModel('bundled');
+  }
+
+  function trim(){ while(history.length>4) history.shift(); }
+
+  var pendingQ = '';
+
+  /* ---------------- routing ---------------- */
+  function ruleAnswer(q){
+    try{
+      var r = window.CHIPBrain.ask(q);
+      if(!r) return null;
+      if(r.action==='clear'){ feed.innerHTML=''; return 'Conversation cleared, sir.'; }
+      if(r.action==='timer'){ startTimer(r.seconds, r.label); return 'Timer set: '+r.label+' in '+r.seconds+'s.'; }
+      if(r.action==='timer-stop'){ clearInterval(timerId); return 'Timer stopped, sir.'; }
+      if(r.skill && r.skill!=='fallback' && r.text) return r.text;
+      if(r.skill==='fallback' && /brain|llm|model/i.test(q)) return null;
+    }catch(e){}
+    return null;
+  }
+
+  function llmAnswer(q){
+    if(!llmReady || !hasAndroid()) return false;
+    var hist = history.map(function(h){ return 'user: '+h.u+'\nassistant: '+h.a; }).join('\n');
+    var want = Math.min(400, 120 + q.length*3);
+    pendingQ = q;
+    botEl = add('bot','');
+    botEl.innerHTML='<span class="caret">▍</span>';
+    botText=''; streaming=true; ring.classList.add('think'); setState('thinking');
+    document.getElementById('b-send').textContent='STOP';
+    try{ Android.generate(SYS, hist, q, want); }
+    catch(e){ window.__mlDone(''); }
+    return true;
+  }
+
+  function ask(q){
+    if(!q || busy) return;
+    busy=true;
+    add('user',q); input.value='';
+    var ans = (mode==='llm') ? null : ruleAnswer(q);
+    if(ans!==null && ans!==undefined){
+      var b=add('bot',''); typeOut(b,ans);
+      history.push({u:q,a:ans}); trim(); say(ans);
+      busy=false;
+      if(window.CHIPBrain){ var n=document.getElementById('modetxt'); if(n) n.textContent='last: rule core ('+window.CHIPBrain.skills().length+' skills)'; }
+      return;
+    }
+    if(mode==='rules'){ var b2=add('bot',''); typeOut(b2,'Rule brain only, sir — tap "brain: llm" to let the local model answer.'); busy=false; return; }
+    if(llmAnswer(q)) return;
+    var b3=add('bot','');
+    typeOut(b3,'The local model is not loaded yet, sir. Tap "reload model". Meanwhile the rule core handles: '+
+              (window.CHIPBrain?window.CHIPBrain.skills().slice(0,10).join(', '):'math, time, notes, conversions'));
+    busy=false;
+  }
+
+  function typeOut(el,text){
+    var i=0, caret=document.createElement('span'); caret.className='caret'; caret.textContent='▍';
+    el.textContent=''; el.appendChild(caret); ring.classList.add('think'); setState('speaking');
+    (function step(){
+      if(i>=text.length){ caret.remove(); ring.classList.remove('think'); setState('online'); return; }
+      var t0=Date.now();
+      while(i<text.length && Date.now()-t0<10){ caret.before(document.createTextNode(text[i++])); }
+      scroll();
+      setTimeout(step, 8);
+    })();
+  }
+
+  var timerId=null;
+  function startTimer(secs,label){
+    clearInterval(timerId);
+    var end=Date.now()+secs*1000;
+    timerId=setInterval(function(){
+      var left=Math.max(0,Math.round((end-Date.now())/1000));
+      setState('timer '+label+' '+left+'s');
+      if(left<=0){ clearInterval(timerId); setState('online'); say('Timer finished: '+label); sys('⏱ '+label); }
+    },250);
+  }
+
+  /* ---------------- wiring ---------------- */
+  document.getElementById('b-send').addEventListener('click',function(){
+    if(streaming){ if(hasAndroid()) Android.stop(); return; }
+    ask(input.value.trim());
+  });
+  input.addEventListener('keydown',function(e){ if(e.key==='Enter') ask(input.value.trim()); });
+
+  var bMode=document.getElementById('b-mode');
+  function refreshMode(){
+    bMode.textContent='brain: '+mode;
+    bMode.classList.toggle('on', mode==='llm');
+    document.getElementById('modetxt').textContent =
+      mode==='rules' ? 'brain: rules only — instant commands, no model.' :
+      mode==='llm' ? 'brain: local model only.' :
+      'brain: auto — commands to the rule core, questions to the local model.';
+  }
+  bMode.addEventListener('click',function(){
+    mode = mode==='auto'?'llm': mode==='llm'?'rules':'auto';
+    localStorage.setItem('ml_mode',mode); refreshMode(); sys('brain: '+mode);
+  });
+
+  document.getElementById('b-llm').addEventListener('click',function(){ if(hasAndroid()) Android.loadModel('bundled'); });
+  document.getElementById('b-pick').addEventListener('click',function(){
+    if(hasAndroid()) Android.pickModel();
+    else sys('Load-any-GGUF needs the Android app.');
+  });
+  var bVox=document.getElementById('b-vox');
+  function refreshVox(){ bVox.textContent='vox: '+(vox?'on':'off'); bVox.classList.toggle('on',vox); }
+  bVox.addEventListener('click',function(){
+    vox=!vox; localStorage.setItem('ml_vox',vox?'on':'off'); refreshVox();
+    if(!vox && hasAndroid()) Android.stopSpeak();
+  });
+  refreshVox(); refreshMode();
+
+  document.getElementById('b-mic').addEventListener('click',function(){
+    if(!hasAndroid()){ sys('Mic needs the Android app.'); return; }
+    if(this.classList.contains('on')){ Android.stopMic(); this.classList.remove('on'); this.textContent='mic'; }
+    else Android.startMic();
+  });
+  document.getElementById('b-help').addEventListener('click',function(){
+    ask('help');
+  });
+
+  add('bot','');
+  typeOut(feed.lastChild.querySelector('.body'),
+    'MARK LIV online, sir. Fully offline — no API key, no PC, no internet. '+
+    'I carry a local Qwen model for questions, and a rule core for commands. '+
+    'Try: "why is the sky blue", "2+2", "10 km in miles", "note buy milk", "help".');
+  setState('online');
+  boot();
+})();
+</script>
+</body>
+</html>

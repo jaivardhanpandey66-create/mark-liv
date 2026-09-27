@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="MarkLivTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/graphite</item>
+        <item name="android:colorBackground">@color/graphite</item>
+        <item name="android:statusBarColor">@color/graphite</item>
+        <item name="android:navigationBarColor">@color/graphite</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
