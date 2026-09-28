@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<title>MARK LIV // offline</title>
+<title>MARK LIV // assistant</title>
 <style>
 :root{--bg:#0b0c0f;--panel:#14161a;--panel2:#1b1e24;--line:#2a2e36;--or:#ff7a18;--or2:#ffa04d;--ink:#e8e4de;--dim:#8b8f98;--ok:#39ff9e;--bad:#ff4f6a}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -71,13 +71,45 @@ button:disabled{opacity:.45}
 #cfgstat{font-size:10px;color:var(--dim);margin-top:10px;line-height:1.5;min-height:14px}
 #cfgstat.ok{color:var(--ok)} #cfgstat.bad{color:var(--bad)} #cfgstat.busy{color:var(--or2)}
 #modetxt{color:var(--dim)}
+#row3{display:flex;gap:6px;padding:0 10px 8px;background:#101216;overflow-x:auto}
+#row3 button{font-size:10px;padding:7px 9px;flex:0 0 auto}
+
+/* one-time key gate */
+#gate{position:fixed;inset:0;z-index:80;display:none;overflow-y:auto;background:#0b0c0f;
+      padding:calc(18px + env(safe-area-inset-top)) 16px calc(18px + env(safe-area-inset-bottom))}
+#gate.open{display:block}
+#gate .wrap{max-width:460px;margin:0 auto;padding-top:6vh}
+#gate h2{font-size:19px;letter-spacing:6px;color:var(--or);text-shadow:0 0 16px rgba(255,122,24,.45)}
+#gate .tag{font-size:9px;letter-spacing:3px;color:var(--dim);text-transform:uppercase;margin:4px 0 14px}
+#gate p.note{font-size:11px;color:var(--dim);line-height:1.6;margin-bottom:14px}
+#gate .field label{display:block;font-size:9px;letter-spacing:2px;color:var(--dim);text-transform:uppercase;margin-bottom:4px}
+#gate .row{display:flex;gap:6px;margin-top:8px}
+#gate .row button{flex:1}
+#detected{font-size:10px;color:var(--or2);margin:-4px 0 12px;line-height:1.5;min-height:13px}
+#gstat{font-size:10px;color:var(--dim);margin-top:10px;line-height:1.5;min-height:14px}
+#gstat.ok{color:var(--ok)} #gstat.bad{color:var(--bad)} #gstat.busy{color:var(--or2)}
+#gate .fine{font-size:9px;color:var(--dim);line-height:1.55;margin-top:14px;border-top:1px dashed var(--line);padding-top:10px}
+
+/* confirm sheet for actions that reach someone else */
+#confirm{position:fixed;inset:0;z-index:70;display:none;background:rgba(5,6,8,.94);
+         padding:calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom))}
+#confirm.open{display:flex;align-items:center;justify-content:center}
+#confirm .box{max-width:400px;width:100%;border:1px solid rgba(255,122,24,.5);background:var(--panel);
+             border-radius:8px;padding:16px}
+#confirm h3{font-size:12px;letter-spacing:3px;color:var(--or);margin-bottom:8px}
+#confirm .what{font-size:12px;line-height:1.6;margin-bottom:6px;word-break:break-word}
+#confirm .why{font-size:10px;color:var(--dim);line-height:1.55;margin-bottom:14px}
+#confirm .row{display:flex;gap:8px}
+#confirm .row button{flex:1}
+#b-auto{color:var(--dim)}
+#b-auto.on{color:var(--bad);border-color:rgba(255,79,106,.55)}
 </style>
 </head>
 <body>
 <header>
   <div>
     <h1>MARK LIV</h1>
-    <div class="sub" id="sub">local brain // api optional</div>
+    <div class="sub" id="sub">booting</div>
   </div>
   <div class="spacer"></div>
   <span class="pill" id="p-llm">LLM …</span>
@@ -93,7 +125,7 @@ button:disabled{opacity:.45}
 <div id="projects">
   <div class="proj self">
     <h3>MARK LIV</h3>
-    <p>This app. Graphite/orange reactor, local Qwen brain, zero network. By Mr Jai.</p>
+    <p>This app. One API key, sealed in the Android keystore. Works the phone on request, keeps Qwen + a rule core offline. By Mr Jai.</p>
   </div>
   <div class="proj">
     <h3>CHIP</h3>
@@ -108,11 +140,24 @@ button:disabled{opacity:.45}
 
 <div id="row2">
   <button id="b-mode">brain: auto</button>
+  <button id="b-auto" title="Skip the confirm sheet before calls, messages, alarms and the camera">confirm: on</button>
   <button id="b-llm">reload model</button>
   <button id="b-pick">load .gguf</button>
   <button id="b-vox">vox: on</button>
   <button id="b-mic">mic</button>
   <button id="b-help">help</button>
+</div>
+
+<div id="row3">
+  <button data-do="volume_up">vol ▲</button>
+  <button data-do="volume_down">vol ▼</button>
+  <button data-do="mute">mute</button>
+  <button data-do="torch" data-on="true">torch on</button>
+  <button data-do="torch" data-on="false">torch off</button>
+  <button data-do="battery">battery</button>
+  <button data-do="storage">storage</button>
+  <button data-do="screen" data-on="true">wake</button>
+  <button data-do="media" data-cmd="pause">pause</button>
 </div>
 
 <footer>
@@ -123,11 +168,11 @@ button:disabled{opacity:.45}
 <div id="sheet">
   <h2>CLOUD BRAIN</h2>
   <p class="note">
-    Optional. MARK LIV already answers offline with the local Qwen model and the
-    rule core. Add any OpenAI-compatible API below and it will use that for
-    questions the local model is too small for. The key is stored on this phone
-    only, in this app's private storage — it is never bundled in the APK.
-    Leave it empty and nothing ever leaves the device.
+    One API key, stored on this phone only. It is sealed with an AES key held in
+    the Android keystore, so it is not readable in the clear, not part of the APK,
+    and never passed to this page — the native side makes the calls with it. Swap
+    providers here whenever you like. The local Qwen model and the rule core keep
+    working as the offline fallback.
   </p>
 
   <div class="field">
@@ -172,6 +217,74 @@ button:disabled{opacity:.45}
   <div id="cfgstat"></div>
 </div>
 
+<div id="confirm">
+  <div class="box">
+    <h3>CONFIRM DEVICE ACTION</h3>
+    <div class="what" id="cf-what"></div>
+    <div class="why" id="cf-why">This one reaches outside the app. Nothing has run yet.</div>
+    <div class="row">
+      <button id="cf-no">CANCEL</button>
+      <button id="cf-yes" class="go">ALLOW</button>
+    </div>
+  </div>
+</div>
+
+<div id="gate">
+  <div class="wrap">
+    <h2>MARK LIV</h2>
+    <div class="tag">one-time setup</div>
+    <p class="note">
+      Paste one AI provider key. MARK LIV detects which provider it belongs to and
+      fills in the endpoint and model for you. With a key on file this app can
+      think properly — and run things on your phone: volume, torch, Wi-Fi, apps,
+      alarms, maps, calls and messages.
+    </p>
+
+    <div class="field">
+      <label for="g-key">API key</label>
+      <input id="g-key" type="password" spellcheck="false" autocapitalize="off"
+             autocomplete="off" placeholder="sk-…  ·  AIza…  ·  gsk_…  ·  sk-ant-…">
+    </div>
+    <div id="detected">waiting for a key</div>
+
+    <div class="field">
+      <label for="g-prov">Provider</label>
+      <select id="g-prov">
+        <option value="auto">Detect from the key (recommended)</option>
+        <option value="qwen">Qwen — DashScope</option>
+        <option value="openrouter">OpenRouter</option>
+        <option value="groq">Groq</option>
+        <option value="gemini">Google Gemini</option>
+        <option value="claude">Anthropic Claude</option>
+        <option value="openai">OpenAI</option>
+        <option value="ollama">Ollama on this network</option>
+        <option value="custom">Custom endpoint</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="g-url">Endpoint</label>
+      <input id="g-url" type="url" spellcheck="false" autocapitalize="off" placeholder="filled in automatically">
+    </div>
+    <div class="field">
+      <label for="g-model">Model</label>
+      <input id="g-model" type="text" spellcheck="false" autocapitalize="off" placeholder="filled in automatically">
+    </div>
+
+    <div class="row">
+      <button id="g-test">TEST KEY</button>
+      <button id="g-save" class="go">SAVE &amp; START</button>
+    </div>
+    <div id="gstat"></div>
+
+    <div class="fine">
+      Asked once. The key is sealed with an AES key that lives in this phone's
+      Android keystore — never written in the clear, never in the APK, and never
+      handed to the page. Uninstalling the app destroys it. The bundled Qwen model
+      and the rule core stay available as an offline fallback brain.
+    </div>
+  </div>
+</div>
+
 <script src="offline_brain.js"></script>
 <script>
 (function(){
@@ -180,42 +293,83 @@ button:disabled{opacity:.45}
       ring=document.getElementById('ring'), state=document.getElementById('state'),
       sub=document.getElementById('sub'), pLlm=document.getElementById('p-llm');
 
-  var SYS = "You are MARK LIV, a private assistant. By default you run fully offline on this phone "+
-            "(local Qwen model, no cloud, no API key); when the user has configured a cloud API you are "+
-            "answering through it. Be concise, warm and practical. "+
-            "You were built by Mr Jai. The companion project CHIP is a holographic J.A.R.V.I.S. "+
-            "agent with a holographic web UI, Rust and C cores, tool calling and telemetry.";
+  var SYS = "You are MARK LIV, a private assistant that runs on this phone and can operate it. "+
+            "You were built by Mr Jai. Be concise, warm and practical. "+
+            "The companion project CHIP is a holographic J.A.R.V.I.S. agent with a holographic web UI, "+
+            "Rust and C cores, tool calling and telemetry. "+
+            "You can control this phone. When the user asks you to actually do something on the "+
+            "device, answer with one short sentence and then a control line of exactly this shape on "+
+            "its own: [[PHONE {\"action\":\"volume_up\"}]] "+
+            "Available actions: volume {\"level\":0-100}, volume_up, volume_down, mute, "+
+            "torch {\"on\":true}, wifi {\"on\":true}, bluetooth {\"on\":true}, battery, storage, "+
+            "open_app {\"name\":\"whatsapp\"}, list_apps, open_url {\"url\":\"…\"}, "+
+            "share {\"text\":\"…\"}, alarm {\"hour\":7,\"minute\":30}, timer {\"seconds\":300}, "+
+            "screen {\"on\":true}, media {\"cmd\":\"play|pause|next|prev\"}, dial {\"number\":\"…\"}, "+
+            "sms {\"number\":\"…\",\"text\":\"…\"}, maps {\"query\":\"…\"}, camera. "+
+            "Emit a control line only when the user really asked for that action, and never invent a "+
+            "number, a contact or an address. Calls, messages, alarms and the camera are confirmed on "+
+            "screen before they run, so say plainly what you are about to do. The result of each action "+
+            "is handed back to you, so continue from what actually happened. "+
+            "If the local Qwen model is answering instead, you cannot run device actions — say so.";
 
   var mode = localStorage.getItem('ml_mode') || 'auto';   // auto | rules | llm | cloud
   var vox  = localStorage.getItem('ml_vox') !== 'off';
+  var auto = localStorage.getItem('ml_auto') === 'on';     // skip the confirm sheet
   var busy = false, streaming = false, botEl = null, botText = '', history = [];
   var llmReady = false, device = {};
   var cloudOn = false, cloudBusy = false;
+  var hasKey = false;
 
   /* any provider works; flavor picks the wire dialect, the rest just fills the form */
   var PROVIDERS = {
     qwen:       { flavor:'openai',    url:'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model:'qwen-plus' },
     openrouter: { flavor:'openai',    url:'https://openrouter.ai/api/v1/chat/completions',                   model:'qwen/qwen-2.5-7b-instruct' },
     groq:       { flavor:'openai',    url:'https://api.groq.com/openai/v1/chat/completions',                  model:'qwen2.5-7b-instruct' },
-    gemini:     { flavor:'gemini',    url:'https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse', model:'gemini-3.8-flash' },
+    openai:     { flavor:'openai',    url:'https://api.openai.com/v1/chat/completions',                      model:'gpt-4o-mini' },
+    gemini:     { flavor:'gemini',    url:'https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse', model:'gemini-2.0-flash' },
     claude:     { flavor:'anthropic', url:'https://api.anthropic.com/v1/messages',                          model:'claude-sonnet-5' },
     ollama:     { flavor:'openai',    url:'http://10.0.2.2:11434/v1/chat/completions',                      model:'qwen2.5:3b' },
     custom:     { flavor:'openai',    url:'', model:'' }
   };
   var FLAVORS = { openai:1, gemini:1, anthropic:1 };
+
+  /* the key prefix is a strong enough hint for every major provider, and the
+     preset dropdown is right there to overrule a wrong guess */
+  function detectProvider(k){
+    if(!k) return '';
+    if(k.indexOf('sk-ant-')===0) return 'claude';
+    if(k.indexOf('AIza')===0)     return 'gemini';
+    if(k.indexOf('sk-or-')===0)   return 'openrouter';
+    if(k.indexOf('gsk_')===0)     return 'groq';
+    if(k.indexOf('sk-')===0)      return k.length>=45 ? 'openai' : 'qwen';
+    return '';
+  }
+
   var cfg = {
-    prov:   localStorage.getItem('ml_prov')   || 'qwen',
+    prov:   localStorage.getItem('ml_prov')   || 'auto',
     flavor: localStorage.getItem('ml_flavor') || '',
     url:    localStorage.getItem('ml_url')    || '',
-    model:  localStorage.getItem('ml_model')  || '',
-    key:    localStorage.getItem('ml_key')    || ''
+    model:  localStorage.getItem('ml_model')  || ''
   };
-  if(!cfg.flavor) cfg.flavor = (PROVIDERS[cfg.prov]||PROVIDERS.custom).flavor;
+  if(!cfg.flavor) cfg.flavor = (PROVIDERS[cfg.prov]||PROVIDERS.openai).flavor;
   if(!cfg.url   && PROVIDERS[cfg.prov]) cfg.url   = PROVIDERS[cfg.prov].url;
   if(!cfg.model && PROVIDERS[cfg.prov]) cfg.model = PROVIDERS[cfg.prov].model;
-  function cloudReady(){
-    return !!(cfg.key && /^https?:\/\//.test(cfg.url||'') && cfg.model);
+
+  /* the key itself never enters this page — only the fact that one is stored */
+  function loadStored(){
+    if(!hasAndroid()) return;
+    try{
+      var s = JSON.parse(Android.setupInfo() || '{}');
+      hasKey = !!s.hasKey;
+      if(hasKey){
+        cfg.prov   = s.prov   || cfg.prov;
+        cfg.flavor = s.flavor || cfg.flavor;
+        cfg.url    = s.url    || cfg.url;
+        cfg.model  = s.model  || cfg.model;
+      }
+    }catch(e){}
   }
+  function cloudReady(){ return hasKey && !!cfg.url && !!cfg.model; }
 
   function add(role,text){
     var d=document.createElement('div');
@@ -268,6 +422,118 @@ button:disabled{opacity:.45}
   window.__mlHeard = function(t){ if(t){ input.value=t; } };
   window.__mlSpeak = function(){};
 
+  /* ---------------- device control ---------------- */
+  var CALL_RE = /\[\[PHONE\s+(\{[\s\S]*?\})\]\]/g;
+  var RISKY = { dial:1, sms:1, alarm:1, timer:1, camera:1 };
+  var callSeq = 0, callQ = [];
+
+  function pad2(n){ n = Number(n)||0; return (n<10?'0':'')+n; }
+
+  function describe(c){
+    var a = c.args || {}, s = c.action;
+    if(s==='volume')    return 'Set media volume to ' + (a.level===undefined?'?':a.level) + '%.';
+    if(s==='volume_up') return 'Turn the volume up.';
+    if(s==='volume_down')return 'Turn the volume down.';
+    if(s==='mute')      return 'Mute the media volume.';
+    if(s==='torch')     return 'Turn the torch ' + (a.on===false?'off':'on') + '.';
+    if(s==='wifi')      return 'Turn Wi-Fi ' + (a.on===false?'off':'on') + '.';
+    if(s==='bluetooth') return 'Turn Bluetooth ' + (a.on===false?'off':'on') + '.';
+    if(s==='battery')   return 'Read the battery level.';
+    if(s==='storage')   return 'Read free storage.';
+    if(s==='open_app')  return 'Open ' + (a.name || a.package || 'an app') + '.';
+    if(s==='list_apps') return 'List the installed apps.';
+    if(s==='open_url')  return 'Open ' + (a.url||'') + '.';
+    if(s==='share')     return 'Share: "' + (a.text||'') + '".';
+    if(s==='alarm')     return 'Set an alarm for ' + pad2(a.hour) + ':' + pad2(a.minute)
+                         + (a.label ? ' — ' + a.label : '') + '.';
+    if(s==='timer')     return 'Set a ' + (a.seconds||300) + 's timer.';
+    if(s==='screen')    return 'Wake the screen.';
+    if(s==='media')     return 'Media: ' + (a.cmd||'play') + '.';
+    if(s==='dial')      return 'Call ' + (a.number||'?') + '. The dialer opens — it will not connect on its own.';
+    if(s==='sms')       return 'Message ' + (a.number||'?') + ': "' + (a.text||'') + '". It opens in the composer, unsent.';
+    if(s==='maps')      return 'Open maps for ' + (a.query||'') + '.';
+    if(s==='camera')    return 'Open the camera.';
+    return s + ' ' + JSON.stringify(a);
+  }
+
+  function extractCalls(text){
+    var out = [], m, re = new RegExp(CALL_RE.source, 'g');
+    while((m = re.exec(text)) !== null){
+      try{
+        var o = JSON.parse(m[1]);
+        if(o && o.action) out.push({ action:String(o.action), args:o });
+      }catch(e){}
+    }
+    return { clean: text.replace(new RegExp(CALL_RE.source,'g'), '').trim(), calls: out };
+  }
+
+  function enqueue(calls){
+    for(var i=0;i<calls.length;i++) callQ.push(calls[i]);
+    pump();
+  }
+
+  function pump(){
+    if(!callQ.length) return;
+    if(RISKY[callQ[0].action] && !auto){
+      document.getElementById('cf-what').textContent = describe(callQ[0]);
+      document.getElementById('confirm').classList.add('open');
+      return;                                    /* resumed by the sheet buttons */
+    }
+    fire(callQ.shift());
+  }
+
+  function fire(c){
+    var id = 'c' + (++callSeq);
+    c.args._id = id;
+    sys('⚙ ' + describe(c));
+    try{ Android.phoneDo(c.action, JSON.stringify(c.args)); }
+    catch(e){ window.__phone({ id:id, ok:false, msg:String(e) }); }
+  }
+
+  window.__phone = function(r){
+    var line = r.ok ? ('✓ ' + r.msg) : ('✗ ' + r.msg);
+    sys(line);
+    /* hand the outcome back to the model so the next turn can build on it */
+    if(history.length) history[history.length-1].a += '\n[device] ' + line;
+    say(line);
+    pump();
+  };
+
+  document.getElementById('cf-yes').addEventListener('click',function(){
+    document.getElementById('confirm').classList.remove('open');
+    if(callQ.length) fire(callQ.shift());
+  });
+  document.getElementById('cf-no').addEventListener('click',function(){
+    document.getElementById('confirm').classList.remove('open');
+    if(callQ.length){
+      var c = callQ.shift();
+      sys('✗ cancelled — ' + describe(c));
+      if(history.length) history[history.length-1].a += '\n[device] the user cancelled that action.';
+    }
+    pump();
+  });
+
+  document.querySelectorAll('#row3 button').forEach(function(b){
+    b.addEventListener('click', function(){
+      if(!hasAndroid()){ sys('Device control needs the Android app.'); return; }
+      var c = { action: b.getAttribute('data-do'), args:{} };
+      if(b.getAttribute('data-on')!==null) c.args.on = b.getAttribute('data-on')==='true';
+      if(b.getAttribute('data-cmd'))       c.args.cmd = b.getAttribute('data-cmd');
+      enqueue([c]);
+    });
+  });
+
+  var bAuto=document.getElementById('b-auto');
+  function refreshAuto(){ bAuto.textContent = auto ? 'confirm: OFF' : 'confirm: on'; bAuto.classList.toggle('on', auto); }
+  bAuto.addEventListener('click',function(){
+    auto = !auto;
+    localStorage.setItem('ml_auto', auto ? 'on' : 'off');
+    refreshAuto();
+    sys(auto ? 'full auto — device actions run without asking'
+             : 'confirmations back on for calls, messages, alarms and the camera');
+  });
+  refreshAuto();
+
   /* ---- optional cloud brain ---- */
   function cloudFinishUI(){
     cloudBusy=false; streaming=false;
@@ -282,8 +548,14 @@ button:disabled{opacity:.45}
   window.__mlNetDone = function(full){
     cloudFinishUI();
     if(full && !botText) botText = full;
-    if(botEl && botText){ botEl.textContent=botText; history.push({u:pendingQ,a:botText}); trim(); say(botText); }
-    else if(botEl) history.push({u:pendingQ,a:'(the cloud model returned nothing)'});
+    if(botEl && botText){
+      var ex = extractCalls(botText);
+      var shown = ex.clean || 'On it, sir.';
+      botEl.textContent = shown;
+      history.push({u:pendingQ, a:shown}); trim(); say(shown);
+      if(ex.calls.length) enqueue(ex.calls);
+    }
+    else if(botEl) history.push({u:pendingQ, a:'(the cloud model returned nothing)'});
     botEl=null; botText='';
     paintPills();
     busy=false;
@@ -329,9 +601,17 @@ button:disabled{opacity:.45}
   function boot(){
     if(!hasAndroid()){ setState('browser mode — rule brain only'); return; }
     try{ device = JSON.parse(Android.device()); }catch(e){ device={}; }
-    sub.textContent = (cloudReady() ? 'local brain // cloud ready' : 'local brain // api optional')
+    loadStored();
+    sub.textContent = (cloudReady() ? 'cloud brain // key saved' : 'needs an API key')
                       + ' // ' + (device.model||'device');
     paintPills();
+    if(!hasKey){
+      /* asked once, here, and never again once a key is sealed */
+      fillGate(); gate.classList.add('open');
+      setState('setup required');
+      return;
+    }
+    setState('online');
     Android.loadModel('bundled');
   }
 
@@ -382,7 +662,7 @@ button:disabled{opacity:.45}
     ring.classList.add('think'); setState('thinking');
     document.getElementById('b-send').textContent='STOP';
     paintPills();
-    try{ Android.netChat(cfg.url, cfg.key, cfg.model, JSON.stringify(msgs), Math.min(1024, 200 + q.length*4), cfg.flavor); }
+    try{ Android.netChatAuto(JSON.stringify(msgs), Math.min(1024, 200 + q.length*4)); }
     catch(e){ window.__mlNetError(String(e)); }
     return true;
   }
@@ -415,7 +695,6 @@ button:disabled{opacity:.45}
               (window.CHIPBrain?window.CHIPBrain.skills().slice(0,10).join(', '):'math, time, notes, conversions'));
     busy=false;
   }
-
   function typeOut(el,text){
     var i=0, caret=document.createElement('span'); caret.className='caret'; caret.textContent='▍';
     el.textContent=''; el.appendChild(caret); ring.classList.add('think'); setState('speaking');
@@ -456,10 +735,10 @@ button:disabled{opacity:.45}
     bMode.classList.toggle('on', mode==='llm'||mode==='cloud');
     document.getElementById('modetxt').textContent =
       mode==='rules' ? 'brain: rules only — instant commands, no model.' :
-      mode==='llm'   ? 'brain: local model only (on-device Qwen).' :
-      mode==='cloud' ? 'brain: cloud API only — needs a key in ⚙.' :
-      (cloudReady() ? 'brain: auto — commands to the rule core, questions to your cloud API, local Qwen as backup.'
-                    : 'brain: auto — commands to the rule core, questions to the local model.');
+      mode==='llm'   ? 'brain: local model only (on-device Qwen). No device control from here.' :
+      mode==='cloud' ? 'brain: cloud API only — your saved key.' :
+      (cloudReady() ? 'brain: auto — commands to the rule core, questions to your API, phone actions on request.'
+                    : 'brain: auto — no key saved yet, so questions go to the local model.');
   }
   bMode.addEventListener('click',function(){
     mode = MODES[(MODES.indexOf(mode)+1) % MODES.length];
@@ -498,12 +777,17 @@ button:disabled{opacity:.45}
   function fillForm(){
     fProv.value = PROVIDERS[cfg.prov] ? cfg.prov : 'custom';
     fFlavor.value = FLAVORS[cfg.flavor] ? cfg.flavor : 'openai';
-    fUrl.value = cfg.url||''; fModel.value = cfg.model||''; fKey.value = cfg.key||'';
+    fUrl.value = cfg.url||''; fModel.value = cfg.model||'';
+    /* the stored key is never readable here, so the box stays empty */
+    fKey.value = '';
+    fKey.placeholder = hasKey ? 'a key is already saved — paste a new one to replace it' : 'paste any AI provider key';
   }
   function setStat(t,cls){ cfgStat.textContent=t||''; cfgStat.className=cls||''; }
 
   document.getElementById('b-cfg').addEventListener('click',function(){
-    fillForm(); setStat(cloudReady() ? 'Saved: ' + cfg.model + ' @ ' + cfg.url : 'No API saved — running fully offline.', cloudReady()?'ok':'');
+    fillForm();
+    setStat(cloudReady() ? 'Saved: ' + cfg.model + ' @ ' + cfg.url + ' — sealed in the Android keystore.'
+                         : 'No API saved.', cloudReady()?'ok':'bad');
     sheet.classList.add('open');
   });
   document.getElementById('f-close').addEventListener('click',function(){ sheet.classList.remove('open'); });
@@ -528,59 +812,161 @@ button:disabled{opacity:.45}
     cfg.flavor = fFlavor.value;
     cfg.url    = fUrl.value.trim();
     cfg.model  = fModel.value.trim();
-    cfg.key    = fKey.value.trim();
+    return fKey.value.trim();
   }
-  function persist(){
+  function rememberLocally(){
     localStorage.setItem('ml_prov', cfg.prov);
     localStorage.setItem('ml_flavor', cfg.flavor);
     localStorage.setItem('ml_url', cfg.url);
     localStorage.setItem('ml_model', cfg.model);
-    localStorage.setItem('ml_key', cfg.key);
   }
 
   document.getElementById('f-save').addEventListener('click',function(){
-    readForm(); persist();
-    cloudOn=false; paintPills(); refreshMode();
-    if(cloudReady()){
-      setStat('Saved. Cloud brain armed: ' + cfg.model + ' (' + cfg.flavor + ')', 'ok');
-      sub.textContent='local brain // cloud ready // ' + (device.model||'device');
-      sys('cloud API saved: ' + cfg.model);
-    } else {
-      setStat('Saved, but incomplete — endpoint, model and key are all required.', 'bad');
+    var key = readForm();
+    if(!hasAndroid()){ setStat('Saving needs the Android app.', 'bad'); return; }
+    if(!key && hasKey){
+      /* nothing new typed — the sealed key stays as it is */
+      rememberLocally(); cloudOn=false; paintPills(); refreshMode();
+      setStat('Endpoint and model updated. The saved key was kept.', 'ok');
+      return;
     }
+    if(!key){ setStat('Paste a key to save one.', 'bad'); return; }
+    if(!/^https?:\/\//.test(cfg.url) || !cfg.model){
+      setStat('Endpoint and model are both required.', 'bad'); return;
+    }
+    if(!Android.saveSetup(JSON.stringify({prov:cfg.prov, flavor:cfg.flavor, url:cfg.url, model:cfg.model, key:key}))){
+      setStat('The keystore refused to seal that key.', 'bad'); return;
+    }
+    hasKey = true; fKey.value=''; rememberLocally();
+    cloudOn=false; paintPills(); refreshMode();
+    setStat('Saved and sealed: ' + cfg.model + ' @ ' + cfg.url, 'ok');
+    sub.textContent = 'cloud brain // key saved // ' + (device.model||'device');
+    sys('cloud API saved: ' + cfg.model);
   });
 
   document.getElementById('f-test').addEventListener('click',function(){
-    readForm();
+    var key = readForm();
     if(!hasAndroid()){ setStat('Testing needs the Android app.', 'bad'); return; }
-    if(!cfg.key){ setStat('Enter an API key first.', 'bad'); return; }
-    setStat('Testing ' + cfg.model + '…', 'busy');
-    Android.netTest(cfg.url, cfg.key, cfg.model, cfg.flavor);
+    if(key){
+      if(!cfg.model){ setStat('Enter a model first.', 'bad'); return; }
+      setStat('Testing ' + cfg.model + '…', 'busy');
+      Android.netTest(cfg.url, key, cfg.model, cfg.flavor);
+    } else if(hasKey){
+      setStat('Testing ' + cfg.model + ' with the saved key…', 'busy');
+      Android.netTestAuto();
+    } else {
+      setStat('No key to test — paste one first.', 'bad');
+    }
   });
 
   document.getElementById('f-clear').addEventListener('click',function(){
-    cfg.key=''; cfg.url=''; cfg.model=''; cfg.prov='qwen'; cfg.flavor='openai';
-    persist(); fillForm(); cloudOn=false; paintPills(); refreshMode();
-    setStat('Cleared. Fully offline again.', '');
-    sub.textContent='local brain // api optional // ' + (device.model||'device');
+    if(hasAndroid()) Android.clearSetup();
+    hasKey=false; cloudOn=false; paintPills(); refreshMode();
+    sheet.classList.remove('open');
+    sub.textContent = 'needs an API key // ' + (device.model||'device');
+    setStat('Key destroyed.', 'bad');
+    fillGate(); gate.classList.add('open');
   });
 
   /* a successful probe turns the pill green */
   var _netStatus = window.__mlNetStatus;
   window.__mlNetStatus = function(s){
     _netStatus(s);
+    if(gate.classList.contains('open')){
+      gStat.textContent = s||''; gStat.className = 'busy';
+      if(s && s.indexOf('contacting')!==0) gStat.className = s.indexOf('connected')===0 ? 'ok' : 'bad';
+    }
     if(s && s.indexOf('connected')===0){
-      setStat(s, 'ok'); cloudOn=true; paintPills();
+      if(!gate.classList.contains('open')) setStat(s, 'ok');
+      cloudOn=true; paintPills();
     }
   };
 
+  /* ---------------- one-time setup gate ---------------- */
+  var gate=document.getElementById('gate'),
+      gKey=document.getElementById('g-key'), gProv=document.getElementById('g-prov'),
+      gUrl=document.getElementById('g-url'), gModel=document.getElementById('g-model'),
+      gStat=document.getElementById('gstat'),
+      detected=document.getElementById('detected');
+
+  function gSet(t,cls){ gStat.textContent=t||''; gStat.className=cls||''; }
+
+  function fillGate(){
+    gKey.value='';
+    gProv.value = (cfg.prov && PROVIDERS[cfg.prov]) ? cfg.prov : 'auto';
+    var p = PROVIDERS[gProv.value] || PROVIDERS.openai;
+    gUrl.value = p.url||''; gModel.value = p.model||'';
+    gSet('');
+    detected.textContent = 'paste a key — the provider is worked out from it';
+  }
+
+  function onGateKey(){
+    var k = gKey.value.trim(), d = detectProvider(k);
+    if(!k){ detected.textContent = 'paste a key — the provider is worked out from it'; return; }
+    if(!d){ detected.textContent = 'prefix not recognised — choose the provider below'; return; }
+    if(gProv.value==='auto'){
+      var p = PROVIDERS[d];
+      gUrl.value = p.url; gModel.value = p.model;
+      detected.textContent = 'detected ' + d + ' → ' + p.model;
+    } else {
+      detected.textContent = 'looks like ' + d + ' — using the provider you picked';
+    }
+  }
+  gKey.addEventListener('input', onGateKey);
+  gProv.addEventListener('change', function(){
+    if(this.value==='auto'){ onGateKey(); return; }
+    var p = PROVIDERS[this.value] || PROVIDERS.custom;
+    gUrl.value = p.url||''; gModel.value = p.model||'';
+    detected.textContent = this.value;
+  });
+
+  function gateSetup(){
+    var prov = gProv.value==='auto' ? (detectProvider(gKey.value.trim()) || 'openai') : gProv.value;
+    var p = PROVIDERS[prov] || PROVIDERS.custom;
+    var url = gUrl.value.trim(), model = gModel.value.trim();
+    if(!gKey.value.trim()){ gSet('Paste your API key first.', 'bad'); return; }
+    if(!/^https?:\/\//.test(url) || !model){ gSet('Endpoint and model are both required.', 'bad'); return; }
+    if(!hasAndroid()){ gSet('Setup needs the Android app.', 'bad'); return; }
+    if(!Android.saveSetup(JSON.stringify({prov:prov, flavor:p.flavor, url:url, model:model, key:gKey.value.trim()}))){
+      gSet('The keystore refused to seal that key.', 'bad'); return;
+    }
+    cfg.prov=prov; cfg.flavor=p.flavor; cfg.url=url; cfg.model=model; hasKey=true;
+    rememberLocally();
+    gKey.value='';                       /* never leave the key sitting in the DOM */
+    gate.classList.remove('open');
+    afterSetup();
+  }
+  document.getElementById('g-save').addEventListener('click', gateSetup);
+  gKey.addEventListener('keydown',function(e){ if(e.key==='Enter') gateSetup(); });
+
+  document.getElementById('g-test').addEventListener('click',function(){
+    if(!hasAndroid()){ gSet('Testing needs the Android app.', 'bad'); return; }
+    var prov = gProv.value==='auto' ? (detectProvider(gKey.value.trim()) || 'openai') : gProv.value;
+    var p = PROVIDERS[prov] || PROVIDERS.custom;
+    var key = gKey.value.trim();
+    if(!key){ gSet('Paste a key to test it.', 'bad'); return; }
+    if(!gModel.value.trim()){ gSet('Enter a model first.', 'bad'); return; }
+    gSet('Testing ' + gModel.value.trim() + '…', 'busy');
+    Android.netTest(gUrl.value.trim(), key, gModel.value.trim(), p.flavor);
+  });
+
+  function afterSetup(){
+    sub.textContent = 'cloud brain // key saved // ' + (device.model||'device');
+    paintPills(); refreshMode();
+    if(!llmReady && hasAndroid()) Android.loadModel('bundled');
+    sys('API key sealed in this phone\'s Android keystore. You will not be asked again.');
+    setState('online');
+    ask('what can you do on this phone?');
+  }
+
   add('bot','');
   typeOut(feed.lastChild.querySelector('.body'),
-    'MARK LIV online, sir. The local Qwen model and the rule core work with no network at all. '+
-    'If you want bigger answers, tap ⚙ and paste any API key — Qwen, OpenRouter, Groq, anything '+
-    'OpenAI-compatible — and I will use that instead, keeping the local model as backup. '+
-    'Try: "why is the sky blue", "2+2", "10 km in miles", "note buy milk", "help".');
-  setState('online');
+    'MARK LIV online, sir. One API key and this thing can work the phone: '+
+    'volume, torch, Wi-Fi, Bluetooth, apps, alarms, maps, the camera, and '+
+    'dialling or messaging a number with your confirmation in front of it. '+
+    'Ask in plain words — "turn the torch off", "open WhatsApp", "set an alarm for 6:30". '+
+    'The local Qwen model and the rule core stay on as the offline fallback.');
+  setState('booting');
   boot();
   refreshMode();
   paintPills();

@@ -47,6 +47,9 @@
   function yesNo(b) { return b ? 'affirmative' : 'negative'; }
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
   function clampNum(n) { return Math.round(n * 1e6) / 1e6; }
+  function isAndroid() {
+    return typeof root.Android !== 'undefined' && root.Android && typeof root.Android.phoneDo === 'function';
+  }
 
   function fmtDate(d) {
     var days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -257,13 +260,13 @@
   };
   var KB = [
     { re: /\b(who|what)\s*(made|built|created|created by|is the (maker|creator|author))\b|who'?s\s+the\s+(maker|creator|author)/, say: function () { return MAKER + ' is the maker of CHIP and MARK LVI. Everything in this interface was designed and built by ' + MAKER + '.'; } },
-    { re: /\b(are you (a )?(human|robot|ai|machine)|are you real|are you chatgpt)\b/, say: function () { return 'Negative. I am CHIP — an offline agent core running entirely on this device. No cloud, no API key, no connection to any PC required.'; } },
+    { re: /\b(are you (a )?(human|robot|ai|machine)|are you real|are you chatgpt)\b/, say: function () { return 'Negative. I am CHIP — an agent core that runs on this device. This offline half needs no cloud and no API key; a separate cloud brain is used only when you have saved a provider key, and it can work the phone.'; } },
     { re: /\b(what|which) (os|system|platform|device|phone|hardware)\b.*\b(you|running)\b|\b(system info|device info|hardware)\b/, say: systemReport },
     { re: /\b(battery|power level|charge)\b/, say: batteryReport },
     { re: /\b(mark ?lvi|mark ?liv)\b/, say: function () { return PROJECTS['mark lvi'].lines.join('\n'); } },
     { re: /\b(chip)\b.*\b(what|about|is)\b|\bwhat is chip\b/, say: function () { return PROJECTS.chip.lines.join('\n'); } },
     { re: /\b(projects|portfolio|what have you (built|made)|your work)\b/, say: projectList },
-    { re: /\b(apk|android|phone app|mobile app)\b/, say: function () { return 'This interface is packaged as an Android APK (io.github.chip.app). It carries the whole UI plus this offline core inside the app, so it runs on the phone alone — no PC, no server, no API key, no internet permission.'; } },
+    { re: /\b(apk|android|phone app|mobile app)\b/, say: function () { return 'This interface ships as an Android APK (io.github.markliv.app). It carries the whole UI and this offline core inside the app, so it runs on the phone alone — no PC, no server. The APK asks for one AI provider key on first launch and keeps it sealed in the Android keystore; the bundled Qwen model and this rule core stay available as the offline fallback. Device control goes through ordinary Android intents, so the app holds no dangerous permissions.'; } },
     { re: /\b(offline|no internet|without internet|airplane mode)\b/, say: function () { return 'Already offline. Every answer you get from me right now is computed on this device by the built-in offline core. Ask "help" to see what I can do without a network.'; } },
     { re: /\b(how do i|how to) (build|make|create) (an |the )?(apk|android app)\b/, say: function () { return 'Build path: bash build_apk.sh — it uses the Android SDK build-tools (aapt2 + javac + d8 + apksigner) straight from the command line, packages web/ into assets, and signs with a debug key. Result lands in dist/CHIP.apk.'; } },
     { re: /\b(thanks|thank you|thx|shukriya|dhanyavad)\b/, say: function () { return 'At your service, sir.'; } },
@@ -330,9 +333,26 @@
       '• dice 2d6 / coin / random 1 100 / pick a, b, c',
       '• reverse / upper / title / count <text> / b64 <text> / hash <text>',
       '• timer 5m (then: stretch) / battery / system info / status',
-      '• projects / about chip / about mark lvi',
+      '• phone (what I can do to this device) / projects / about chip / about mark lvi',
       '• joke / quote / clear (wipes the conversation)'
     ].join('\n');
+  });
+
+  skill(/\b(phone|device control|control (my |the )?(phone|device)|what can you do (to|on) (my |the )?(phone|device)|operate (my |the )?phone)\b/i, 'phone', function () {
+    if (!isAndroid()) {
+      return 'On a browser I can only read the page in front of me, sir. ' +
+             'Device control needs the Android app — there, the cloud brain can turn the volume, ' +
+             'work the torch and Wi-Fi, open apps, set alarms, search maps, and put a call or a ' +
+             'message in front of you to confirm.';
+    }
+    return 'On this phone I can, sir: ' +
+           'volume up / down / mute or set a level, the torch, Wi-Fi, Bluetooth, screen wake, ' +
+           'media play-pause, battery and storage readouts, open any installed app, open a URL, ' +
+           'share text, set an alarm or a timer, search maps, open the camera, and open the dialer ' +
+           'or the message composer for a number you give me. ' +
+           'Calls, messages, alarms and the camera stop and ask you first — unless you switch ' +
+           'confirmations off with the "confirm" button. Just say it in plain words: ' +
+           '"turn the torch off", "open WhatsApp", "set an alarm for 6:30", "how much storage is left".';
   });
 
   skill(/\b(time|what('?s| is) the time|clock)\b/i, 'time', function () {

@@ -2,21 +2,41 @@ package io.github.markliv.app;
 
 import android.Manifest;
 import android.app.Activity;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothManager;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.hardware.camera2.CameraCharacteristics;
+import android.hardware.camera2.CameraManager;
+import android.media.AudioManager;
 import android.net.Uri;
-import android.os.Build;
+import android.net.wifi.WifiManager;
+import android.os.BatteryManager;import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
+import android.os.StatFs;
+import android.os.SystemClock;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
+import android.provider.AlarmClock;
+import android.provider.MediaStore;
+import android.provider.Settings;
+import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyProperties;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
+import android.util.Base64;
 import android.util.Log;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.WindowManager;
 import android.webkit.ConsoleMessage;
@@ -36,10 +56,17 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.security.KeyStore;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
 
 public class MainActivity extends Activity {
 
@@ -61,6 +88,18 @@ public class MainActivity extends Activity {
     private File modelFile;          // models/<name>.ggmf inside filesDir
     private String pendingPickPath = null;
     private volatile boolean micWanted = false;
+    private PowerManager.WakeLock wakeLock = null;
+
+    /* the cloud credentials live encrypted in the Android keystore, never in the
+       WebView's localStorage and never in the APK */
+    private static final String PREF_SECURE = "markliv_secure";
+    private static final String KALIAS = "markliv_api_v1";
+    private static final String P_IV = "iv";
+    private static final String P_CT = "ct";
+
+    /* actions that reach another person or change the device's commitments:
+       the UI puts a confirm sheet in front of these unless full auto is on */
+    private static final String[] RISKY = {"dial", "sms", "alarm", "timer", "camera"};
 
     // ------------------------------------------------------------------ setup
 
@@ -181,6 +220,325 @@ public class MainActivity extends Activity {
 
     private int threads() {
         return Math.max(2, Math.min(6, Runtime.getRuntime().availableProcessors()));
+    }
+
+    // ------------------------------------------------------- secure key store
+    //
+    // One AES-GCM key lives in the Android keystore (non-exportable, hardware
+    // backed where the device has a TEE). The provider block — endpoint, model,
+    // dialect and the API key — is sealed with it and kept in private prefs, so
+    // the key is asked for once, never touches disk in the clear, and cannot be
+    // lifted out of the APK or read off the WebView's localStorage.
+
+    private SharedPreferences secure() {
+        return getSharedPreferences(PREF_SECURE, Activity.MODE_PRIVATE);
+    }
+
+    private SecretKey sealKey() throws Exception {
+        KeyStore ks = KeyStore.getInstance("AndroidKeyStore");
+        ks.load(null);
+        KeyStore.Entry e = ks.getEntry(KALIAS, null);
+        if (e instanceof KeyStore.SecretKeyEntry) return ((KeyStore.SecretKeyEntry) e).getSecretKey();
+        KeyGenerator kg = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
+        kg.init(new KeyGenParameterSpec.Builder(KALIAS,
+                        KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setRandomizedEncryptionRequired(true)
+                .build());
+        return kg.generateKey();
+    }
+
+    /** seal the setup JSON; throws if the keystore is unavailable */
+    private void seal(String plain) throws Exception {
+        Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
+        c.init(Cipher.ENCRYPT_MODE, sealKey());
+        byte[] iv = c.getIV();
+        byte[] ct = c.doFinal(plain.getBytes("UTF-8"));
+        secure().edit()
+                .putString(P_IV, Base64.encodeToString(iv, Base64.NO_WRAP))
+                .putString(P_CT, Base64.encodeToString(ct, Base64.NO_WRAP))
+                .apply();
+    }
+
+    /** open the sealed setup JSON, or "" when nothing is stored / it is unreadable */
+    private String unseal() {
+        try {
+            String iv = secure().getString(P_IV, null), ct = secure().getString(P_CT, null);
+            if (iv == null || ct == null) return "";
+            Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
+            c.init(Cipher.DECRYPT_MODE, sealKey(),
+                   new GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP)));
+            return new String(c.doFinal(Base64.decode(ct, Base64.NO_WRAP)), "UTF-8");
+        } catch (Throwable t) {
+            Log.w(TAG, "sealed setup unreadable: " + t);
+            return "";
+        }
+    }
+
+    private org.json.JSONObject storedSetup() {
+        try {
+            String raw = unseal();
+            return raw.isEmpty() ? new org.json.JSONObject() : new org.json.JSONObject(raw);
+        } catch (Throwable t) {
+            return new org.json.JSONObject();
+        }
+    }
+
+    private boolean isRisky(String action) {
+        if (action == null) return false;
+        for (String r : RISKY) if (r.equals(action)) return true;
+        return false;
+    }
+
+    // ---------------------------------------------------------- phone control
+
+    /** @return a short human sentence describing what happened */
+    private String doPhone(String action, org.json.JSONObject a) throws Exception {
+        if (action == null || action.trim().isEmpty())
+            throw new IllegalArgumentException("no action given");
+
+        switch (action) {
+
+            case "battery": {
+                Intent st = registerReceiver(null,
+                        new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+                int lvl = st == null ? -1 : st.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+                int scl = st == null ? -1 : st.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+                int pct = (lvl >= 0 && scl > 0) ? Math.round(100f * lvl / scl) : -1;
+                int plug = st == null ? 0 : st.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0);
+                String tech = st == null ? "" : String.valueOf(st.getIntExtra(BatteryManager.EXTRA_TECHNOLOGY, 0));
+                return pct + "% " + (plug > 0 ? "charging" : "on battery")
+                        + (tech.equals("2") ? ", USB" : tech.equals("1") ? ", AC" : tech.equals("5") ? ", wireless" : "");
+            }
+
+            case "storage": {
+                StatFs fs = new StatFs(getFilesDir().getAbsolutePath());
+                long free = fs.getAvailableBytes(), total = fs.getTotalBytes();
+                return Math.round(free / 1048576.0) + " MB free of " + Math.round(total / 1048576.0) + " MB";
+            }
+
+            case "volume": {
+                AudioManager am = audio();
+                int v = Math.max(0, Math.min(100, a.optInt("level", 50)));
+                am.setStreamVolume(AudioManager.STREAM_MUSIC, v, 0);
+                return "volume set to " + v + "%";
+            }
+
+            case "volume_up": {
+                audio().adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, 0);
+                return "volume up";
+            }
+
+            case "volume_down": {
+                audio().adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, 0);
+                return "volume down";
+            }
+
+            case "mute": {
+                audio().setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0);
+                return "muted";
+            }
+
+            case "torch": {
+                boolean on = a.optBoolean("on", true);
+                CameraManager cm = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
+                if (cm == null) throw new IllegalStateException("no camera service");
+                for (String id : cm.getCameraIdList()) {
+                    Boolean has = cm.getCameraCharacteristics(id).get(CameraCharacteristics.FLASH_INFO_AVAILABLE);
+                    if (Boolean.TRUE.equals(has)) {
+                        cm.setTorchMode(id, on);
+                        return "torch " + (on ? "on" : "off");
+                    }
+                }
+                throw new IllegalStateException("this phone has no torch");
+            }
+
+            case "wifi": {
+                boolean on = a.optBoolean("on", true);
+                WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if (wm == null) throw new IllegalStateException("no wifi service");
+                if (wm.isWifiEnabled() == on) return "wifi already " + (on ? "on" : "off");
+                if (Build.VERSION.SDK_INT >= 29) {
+                    /* Android 10+ refuses programmatic toggles — send the user to the panel */
+                    startActivity(new Intent(Settings.Panel.ACTION_WIFI));
+                    return "opened the Wi-Fi panel — tap to turn Wi-Fi " + (on ? "on" : "off");
+                }
+                wm.setWifiEnabled(on);
+                return "wifi " + (on ? "on" : "off");
+            }
+
+            case "bluetooth": {
+                boolean on = a.optBoolean("on", true);
+                BluetoothAdapter ba = null;
+                try {
+                    BluetoothManager bm = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
+                    if (bm != null) ba = bm.getAdapter();
+                } catch (Throwable ignored) { }
+                if (ba == null) ba = BluetoothAdapter.getDefaultAdapter();
+                if (ba == null) throw new IllegalStateException("no Bluetooth adapter");
+                if (ba.isEnabled() == on) return "Bluetooth already " + (on ? "on" : "off");
+                /* REQUEST_DISABLE is not public API, so the string is spelled out */
+                startActivity(new Intent(on ? BluetoothAdapter.ACTION_REQUEST_ENABLE
+                                             : "android.bluetooth.adapter.action.REQUEST_DISABLE"));
+                return "Bluetooth " + (on ? "on" : "off") + " — confirm on the system dialog";
+            }
+
+            case "open_app": {
+                String pkg = a.optString("package", "").trim();
+                String name = a.optString("name", "").trim();
+                PackageManager pm = getPackageManager();
+                Intent launch = pkg.isEmpty() ? null : pm.getLaunchIntentForPackage(pkg);
+                if (launch == null && !name.isEmpty()) {
+                    String want = name.toLowerCase(Locale.ROOT);
+                    List<ApplicationInfo> apps = pm.getInstalledApplications(0);
+                    for (ApplicationInfo ai : apps) {
+                        String label = String.valueOf(pm.getApplicationLabel(ai)).toLowerCase(Locale.ROOT);
+                        if (label.equals(want) || label.contains(want)) {
+                            launch = pm.getLaunchIntentForPackage(ai.packageName);
+                            if (launch != null) { pkg = ai.packageName; break; }
+                        }
+                    }
+                }
+                if (launch == null)
+                    throw new IllegalStateException(name.isEmpty()
+                            ? "no app with package " + pkg + " is installed"
+                            : "no installed app called \"" + name + "\"");
+                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(launch);
+                return "opened " + (name.isEmpty() ? pkg : name);
+            }
+
+            case "list_apps": {
+                PackageManager pm = getPackageManager();
+                StringBuilder b = new StringBuilder();
+                int n = 0;
+                for (ApplicationInfo ai : pm.getInstalledApplications(0)) {
+                    if (pm.getLaunchIntentForPackage(ai.packageName) == null) continue;
+                    String label = String.valueOf(pm.getApplicationLabel(ai));
+                    if (label.isEmpty() || label.length() > 28) continue;
+                    if (b.length() > 0) b.append(", ");
+                    b.append(label);
+                    if (++n >= 40) break;
+                }
+                return b.length() == 0 ? "no launchable apps visible" : b.toString();
+            }
+
+            case "open_url": {
+                String u = a.optString("url", "").trim();
+                if (u.isEmpty()) throw new IllegalArgumentException("no url given");
+                if (!u.startsWith("http://") && !u.startsWith("https://")) u = "https://" + u;
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(u)));
+                return "opened " + u;
+            }
+
+            case "share": {
+                String text = a.optString("text", "");
+                String title = a.optString("title", "MARK LIV");
+                Intent i = new Intent(Intent.ACTION_SEND);
+                i.setType("text/plain");
+                i.putExtra(Intent.EXTRA_TEXT, text);
+                i.putExtra(Intent.EXTRA_TITLE, title);
+                startActivity(Intent.createChooser(i, title));
+                return "share sheet open";
+            }
+
+            case "alarm": {
+                int h = Math.max(0, Math.min(23, a.optInt("hour", 9)));
+                int m = Math.max(0, Math.min(59, a.optInt("minute", 0)));
+                Intent i = new Intent(AlarmClock.ACTION_SET_ALARM);
+                i.putExtra(AlarmClock.EXTRA_HOUR, h);
+                i.putExtra(AlarmClock.EXTRA_MINUTES, m);
+                String label = a.optString("label", "MARK LIV");
+                if (!label.isEmpty()) i.putExtra(AlarmClock.EXTRA_MESSAGE, label);
+                i.putExtra(AlarmClock.EXTRA_SKIP_UI, a.optBoolean("skip_ui", true));
+                if (a.optBoolean("silent", false)) i.putExtra(AlarmClock.EXTRA_VIBRATE, false);
+                startActivity(i);
+                return "alarm set for " + (h < 10 ? "0" + h : "" + h) + ":" + (m < 10 ? "0" + m : "" + m);
+            }
+
+            case "timer": {
+                int secs = Math.max(1, a.optInt("seconds", 300));
+                Intent i = new Intent(AlarmClock.ACTION_SET_TIMER);
+                i.putExtra(AlarmClock.EXTRA_LENGTH, secs);
+                i.putExtra(AlarmClock.EXTRA_MESSAGE, a.optString("label", "MARK LIV timer"));
+                i.putExtra(AlarmClock.EXTRA_SKIP_UI, true);
+                startActivity(i);
+                return secs + "s timer set";
+            }
+
+            case "screen": {
+                if (!a.optBoolean("on", true))
+                    throw new UnsupportedOperationException(
+                            "Android does not let an app turn the screen off — press the power key");
+                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (pm == null) throw new IllegalStateException("no power service");
+                if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+                wakeLock = pm.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK
+                        | PowerManager.ACQUIRE_CAUSES_WAKEUP, "markliv:wake");
+                wakeLock.acquire(20000L);
+                return "screen woken";
+            }
+
+            case "media": {
+                String cmd = a.optString("cmd", "play");
+                int code;
+                switch (cmd) {
+                    case "play":  code = KeyEvent.KEYCODE_MEDIA_PLAY;  break;
+                    case "pause": code = KeyEvent.KEYCODE_MEDIA_PAUSE; break;
+                    case "next":  code = KeyEvent.KEYCODE_MEDIA_NEXT;  break;
+                    case "prev":  code = KeyEvent.KEYCODE_MEDIA_PREVIOUS; break;
+                    case "stop":  code = KeyEvent.KEYCODE_MEDIA_STOP;  break;
+                    default: throw new IllegalArgumentException("unknown media command: " + cmd);
+                }
+                long t = SystemClock.uptimeMillis();
+                audio().dispatchMediaKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, code, 0));
+                audio().dispatchMediaKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP, code, 0));
+                return "media " + cmd;
+            }
+
+            case "dial": {
+                String num = a.optString("number", "").trim();
+                if (num.isEmpty()) throw new IllegalArgumentException("no number given");
+                startActivity(new Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode(num))));
+                return "dialer open for " + num + " — tap call to connect";
+            }
+
+            case "sms": {
+                String num = a.optString("number", "").trim();
+                if (num.isEmpty()) throw new IllegalArgumentException("no number given");
+                Intent i = new Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + Uri.encode(num)));
+                String body = a.optString("text", "");
+                if (!body.isEmpty()) i.putExtra("sms_body", body);
+                startActivity(i);
+                return "message ready for " + num + " — review it, then send";
+            }
+
+            case "maps": {
+                String q = a.optString("query", "").trim();
+                if (q.isEmpty()) throw new IllegalArgumentException("no place given");
+                startActivity(new Intent(Intent.ACTION_VIEW,
+                        Uri.parse("geo:0,0?q=" + Uri.encode(q))));
+                return "maps opened for " + q;
+            }
+
+            case "camera": {
+                Intent i = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+                if (i.resolveActivity(getPackageManager()) == null)
+                    throw new IllegalStateException("no camera app on this device");
+                startActivity(i);
+                return "camera open";
+            }
+
+            default:
+                throw new IllegalArgumentException("unknown action: " + action);
+        }
+    }
+
+    private AudioManager audio() {
+        AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        if (am == null) throw new IllegalStateException("no audio service");
+        return am;
     }
 
     // ---------------------------------------------------------- cloud (optional)
@@ -614,6 +972,111 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void netStop() { cloudStop = true; }
 
+        // ---- the one-time key setup, sealed in the Android keystore ----
+
+        /** true once a key has been saved — the UI only shows the gate while this is false */
+        @JavascriptInterface
+        public boolean hasSetup() {
+            return storedSetup().optString("key", "").trim().length() > 0;
+        }
+
+        /** the stored provider block minus the key itself */
+        @JavascriptInterface
+        public String setupInfo() {
+            org.json.JSONObject o = storedSetup();
+            try {
+                boolean has = o.optString("key", "").trim().length() > 0;
+                o.remove("key");
+                o.put("hasKey", has);
+            } catch (Throwable ignored) { }
+            return o.toString();
+        }
+
+        /** seals {prov,flavor,url,model,key}; false when it is incomplete or the keystore refuses */
+        @JavascriptInterface
+        public boolean saveSetup(String json) {
+            try {
+                org.json.JSONObject o = new org.json.JSONObject(json == null ? "{}" : json);
+                if (o.optString("key", "").trim().isEmpty()) return false;
+                if (o.optString("url", "").trim().isEmpty()) return false;
+                if (o.optString("model", "").trim().isEmpty()) return false;
+                if (o.optString("flavor", "").trim().isEmpty()) o.put("flavor", F_OPENAI);
+                seal(o.toString());
+                return true;
+            } catch (Throwable t) {
+                Log.e(TAG, "saveSetup", t);
+                return false;
+            }
+        }
+
+        @JavascriptInterface
+        public void clearSetup() { secure().edit().clear().apply(); }
+
+        // ---- chat using the sealed credentials; the key never enters the WebView ----
+
+        @JavascriptInterface
+        public void netChatAuto(final String messagesJson, final int maxTokens) {
+            org.json.JSONObject o = storedSetup();
+            cloudStop = false;
+            cloud.execute(() -> cloudChat(o.optString("url"), o.optString("key"),
+                    o.optString("model"), messagesJson, maxTokens, false,
+                    o.optString("flavor", F_OPENAI)));
+        }
+
+        @JavascriptInterface
+        public void netTestAuto() {
+            org.json.JSONObject o = storedSetup();
+            cloudStop = false;
+            String probe = "[{\"role\":\"user\",\"content\":\"Reply with the single word OK\"}]";
+            cloud.execute(() -> cloudChat(o.optString("url"), o.optString("key"),
+                    o.optString("model"), probe, 16, true,
+                    o.optString("flavor", F_OPENAI)));
+        }
+
+        // ---- device control ----
+
+        @JavascriptInterface
+        public boolean isRisky(String action) { return MainActivity.this.isRisky(action); }
+
+        @JavascriptInterface
+        public String riskyActions() {
+            StringBuilder b = new StringBuilder();
+            for (String r : RISKY) { if (b.length() > 0) b.append(','); b.append(r); }
+            return b.toString();
+        }
+
+        /**
+         * Runs one device action. Results come back asynchronously on
+         * window.__phone({id,ok,msg}) so a started activity never blocks the
+         * JavaScript thread it was called from.
+         */
+        @JavascriptInterface
+        public void phoneDo(final String action, final String argsJson) {
+            org.json.JSONObject parsed;
+            try {
+                parsed = (argsJson == null || argsJson.trim().isEmpty())
+                        ? new org.json.JSONObject() : new org.json.JSONObject(argsJson);
+            } catch (Throwable t) {
+                parsed = new org.json.JSONObject();
+            }
+            final org.json.JSONObject a = parsed;
+            ui.post(() -> {
+                String ok = "1", msg;
+                try {
+                    msg = doPhone(action, a);
+                } catch (Throwable t) {
+                    ok = "0";
+                    String m = t.getMessage();
+                    msg = m == null || m.isEmpty() ? t.getClass().getSimpleName() : m;
+                }
+                StringBuilder js = new StringBuilder("{\"ok\":").append(ok)
+                        .append(",\"msg\":").append(MainActivity.js(msg))
+                        .append(",\"id\":").append(MainActivity.js(a.optString("_id", "")))
+                        .append("}");
+                post("window.__phone && window.__phone(" + js + ")");
+            });
+        }
+
         @JavascriptInterface
         public void speak(String text) {
             if (tts == null || text == null || text.trim().isEmpty()) return;
@@ -883,6 +1346,7 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         super.onDestroy();
         Llama.setSink(null);
+        try { if (wakeLock != null && wakeLock.isHeld()) wakeLock.release(); } catch (Throwable ignored) { }
         try { if (tts != null) tts.shutdown(); } catch (Throwable ignored) { }
         try { if (asr != null) asr.destroy(); } catch (Throwable ignored) { }
         brain.execute(Llama::freeModel);
